@@ -21,6 +21,7 @@
 //   %APPDATA%\BlueWake\disc.txt, game\         a download's disc, prepared
 //   %APPDATA%\BlueWake\sram.bin                the console's settings
 //   %APPDATA%\BlueWake\logs\session-*.log      the newest eight sessions
+//   %APPDATA%\BlueWake\states\*.bwstate        save states (F5 saves, F8 loads)
 // Every default is only a default: an environment variable that is already
 // set (BLUEWAKE_DISC, BLUEWAKE_CARD_PATH, ...) wins.
 #ifndef WIN32_LEAN_AND_MEAN
@@ -518,7 +519,8 @@ static void usage(void) {
             "Keyboard: arrows D-pad, J A, K B, U X, I Y, W/A/S/D stick,\n"
             "H/F/T/G C-stick, E/R L/R, Q Z, Return START. Game controllers work too.\n"
             "Mouse: click the game, then move it to turn the camera; Esc releases it.\n"
-            "F1 or Esc settings, F11 or Alt+Enter fullscreen, F10 Smooth Motion, F9 frame rate.\n"
+            "F1 or Esc settings, F11 or Alt+Enter fullscreen, F10 Smooth Motion, F9 frame rate,\n"
+            "F5 save state, F8 load the latest state.\n"
             "The settings menu saves to %%APPDATA%%\\BlueWake\\settings.ini; options given here\n"
             "win for the session.\n");
 }
@@ -636,6 +638,9 @@ int main(int argc, char** argv) {
     bw_default("BLUEWAKE_NATIVE_MATH", "1");
     bw_default_path("BLUEWAKE_SRAM", g_data_dir, "sram.bin");
     bw_default_path("BLUEWAKE_CARD_PATH", g_data_dir, "GZLE01.card");
+    // Save states (main.c): F5 writes quick-<retrace>.bwstate there, F8 loads
+    // the latest (F9 is the frame rate here; mouse_camera.c).
+    bw_default_path("BLUEWAKE_STATE_DIR", g_data_dir, "states");
     // The shader and pipeline caches with the rest of this data folder (for the
     // default folder, where they always were), so a second copy run with its
     // own BLUEWAKE_DATA_DIR never writes the same SQLite file at the same time.

@@ -64,12 +64,14 @@ set(BLUEWAKE_HOST_SOURCES
     ${BLUEWAKE_HOST_SRC}/game_options.c
     ${BLUEWAKE_HOST_SRC}/fast_load.c
     ${BLUEWAKE_HOST_SRC}/jump_button.c
+    ${BLUEWAKE_HOST_SRC}/climb.c
     ${BLUEWAKE_HOST_SRC}/simulation_mode.c
     ${BLUEWAKE_HOST_SRC}/sprint.c
     ${BLUEWAKE_HOST_SRC}/quick_doors.c
     ${BLUEWAKE_HOST_SRC}/fps_watch.c
     ${BLUEWAKE_HOST_SRC}/draw_tags.c
-    ${BLUEWAKE_HOST_SRC}/mouse_camera.c)
+    ${BLUEWAKE_HOST_SRC}/mouse_camera.c
+    ${BLUEWAKE_HOST_SRC}/save_state.c)
 
 # The manifest (DPI awareness, long paths, UTF-8 code page) is merged into the
 # one the linker embeds.
@@ -86,9 +88,11 @@ add_executable(BlueWake
 set_source_files_properties(${BLUEWAKE_HOST_SRC}/main.c PROPERTIES
     COMPILE_DEFINITIONS "main=bluewake_host_main")
 # win_disc.c: the first launch's disc check and preparation (the iOS app's
-# importer), its progress window and the file picker.
+# importer), its progress window and the file picker. Save states
+# (save_state.c) are gzip files: Aurora's zlib (zlib-ng in its zlib-compatible
+# build, zlib1.dll beside the executable).
 target_link_libraries(BlueWake PRIVATE gxruntime GXRuntime::aurora bluewake_posix_compat winmm
-    bcrypt comctl32 comdlg32)
+    bcrypt comctl32 comdlg32 ZLIB::ZLIB)
 set_target_properties(BlueWake PROPERTIES LINKER_LANGUAGE CXX OUTPUT_NAME BlueWake)
 target_include_directories(BlueWake PRIVATE
     ${BLUEWAKE_COMPAT_INCLUDES}

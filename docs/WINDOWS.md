@@ -157,6 +157,7 @@ BlueWake remembers where you left it, its size, and whether it was fullscreen.
 | Fullscreen | F11 or Alt+Enter |
 | Smooth Motion | F10 |
 | Frame rate | F9 |
+| Save state, load the latest | F5, F8 |
 
 Game controllers work through SDL (Xbox, PlayStation, Switch Pro and others). The title screen wants A to reach
 the file menu. The right stick turns the camera directly, like the mouse (360 degrees a second at full tilt, no
@@ -166,6 +167,18 @@ stick, stays out of the ground and the water: its angles go in before the game's
 person and when aiming an item it aims instead; a cutscene, door or Z-target takes the camera back. Scene
 changes are quick: the fades are short and the black between them runs as fast as the PC can, and through a door
 with a knob Link skips the walk-in and the door closing behind him (both can be turned off in the Mods tab).
+
+**Climbing** (off by default; Mods, *Climb any wall*): Link climbs a plain wall the way he climbs ivy, Breath
+of the Wild style. Walk or jump into a steep wall to grab it; climbing and hanging use up the stamina wheel
+beside him (hanging still, less), and when it runs out he lets go and cannot climb again until it has refilled
+on the ground. The wheel lasts 12 seconds of climbing by default (4 to 30 in the menu). Ivy, ladders, ledges he
+pulls himself onto, walls he sidles along and blocks he pushes behave as in the game.
+
+**Save states.** F5 saves the whole running game to `%APPDATA%\BlueWake\states` and F8 loads the
+latest one (the menu has buttons for both). They are taken at the next moment the game is between frames with
+no scene change, door or memory card write in progress, so one can wait a moment. A state belongs to the build
+that made it: a newer BlueWake, or the Mac app, refuses it. The memory card is not part of a state; use the
+game's own save for anything you want to keep. (On a Mac F9 loads; on Windows F9 is the frame rate.)
 
 **Settings.** F1 opens the settings over the game (it keeps running underneath; the keyboard and mouse work the
 menu until you close it):
@@ -178,7 +191,8 @@ menu until you close it):
   game's own) and its turn and aim speeds, the controller's camera stick directions (for either), and the
   keyboard layout.
 - *Mods*: 4:3, 16:10 or 16:9, Better Wind Waker and each of its options, quick doors, skipping through the
-  black while loading, and an HD texture pack (a Dolphin-format pack for GZLE01, in the folder the menu opens).
+  black while loading, climbing any wall and its stamina, and an HD texture pack (a Dolphin-format pack for
+  GZLE01, in the folder the menu opens).
 - *Sound and files*: fast (Dolphin's high-level) or exact (the DSP's own program) sound, and your files.
 
 Display and control settings apply at once. The mods and the sound mode are compiled paths chosen when the game
@@ -231,6 +245,7 @@ never touches it:
 - `sram.bin`: the console's settings (sound mode and the like)
 - `settings.ini`: the settings menu's choices and the window's place
 - `Load\Textures\GZLE01`: where an HD texture pack goes
+- `states\quick-*.bwstate`: save states (F5); delete any you no longer want
 - `logs\session-*.log`: the newest eight sessions, one line a second of speed and timing plus anything that went
   wrong. Attach the relevant one to a bug report. If BlueWake crashes, the log says where. It starts with the
   `CPU model`, `CPU cores` and GPU lines. Each second has a `[perf]` line (the game's retraces: 60 is full

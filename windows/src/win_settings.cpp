@@ -1,6 +1,7 @@
 // BlueWake for Windows: the settings, the in-game settings menu (F1 or Esc),
 // the desktop hotkeys (F11 and Alt+Enter fullscreen, F10 Smooth Motion, F9 the
-// frame rate) and the window's placement.
+// frame rate) and the window's placement. Save states' keys (F5 save, F8 load)
+// are the host's (mouse_camera.c); the menu has buttons for them too.
 //
 // The settings live in %APPDATA%\BlueWake\settings.ini. At launch they become
 // the host's own variables (BLUEWAKE_*, DOL_*) unless the command line already
@@ -59,6 +60,13 @@ const char* bluewake_game_options_describe(uint32_t position, const char** title
 // quick_doors.h and fast_load.h: read BLUEWAKE_QUICK_DOORS and BLUEWAKE_FAST_FORWARD again.
 void bluewake_quick_doors_reload(void);
 void bluewake_fast_load_reload(void);
+// climb.h: BLUEWAKE_CLIMB and BLUEWAKE_CLIMB_STAMINA read again, and the
+// stamina wheel's place in the game's picture.
+void bluewake_climb_reload(void);
+bool bluewake_climb_hud(float* fraction, bool* exhausted, float* x, float* y, float* aspect, float* alpha);
+// save_state.h: a save (false) or a load of the latest state (true), done by
+// the game thread at its next clean point.
+void bluewake_save_state_hotkey(bool load);
 }
 
 // Aurora's frame counters (lib/gfx/common.hpp, linked in statically), for the
@@ -83,6 +91,8 @@ struct Settings {
     bool pause_unfocused = false;
     bool fast_forward = true;  // skip through the black while loading (fast_load.h)
     bool quick_doors = true;   // no walk-in or door closing behind Link (quick_doors.h)
+    bool climb = false;        // climb any wall on a stamina wheel (climb.h)
+    int climb_stamina = 12;    // seconds of climbing on a full wheel
     // Controls: apply at once.
     bool mouse_camera = true;
     double mouse_sensitivity = 1.0;
@@ -151,6 +161,8 @@ void load_file() {
         else if (k == "smooth_motion_fps") d.smooth_steps = std::atoi(v.c_str()) >= 120 ? 3 : 1;
         else if (k == "fast_forward") d.fast_forward = parse_bool(v);
         else if (k == "quick_doors") d.quick_doors = parse_bool(v);
+        else if (k == "climb") d.climb = parse_bool(v);
+        else if (k == "climb_stamina") d.climb_stamina = std::clamp(std::atoi(v.c_str()), 4, 30);
         else if (k == "show_fps") d.show_fps = parse_bool(v);
         else if (k == "pause_unfocused") d.pause_unfocused = parse_bool(v);
         else if (k == "mouse_camera") d.mouse_camera = parse_bool(v);
@@ -188,6 +200,7 @@ void save_file() {
                  d.render_scale, d.anisotropy, d.smooth_motion, d.show_fps, d.pause_unfocused);
     std::fprintf(f, "smooth_motion_fps=%d\nfast_forward=%d\nquick_doors=%d\n", d.smooth_steps >= 3 ? 120 : 60,
                  d.fast_forward, d.quick_doors);
+    std::fprintf(f, "climb=%d\nclimb_stamina=%d\n", d.climb, d.climb_stamina);
     std::fprintf(f, "mouse_camera=%d\nmouse_sensitivity=%.2f\nmouse_invert_y=%d\n", d.mouse_camera,
                  d.mouse_sensitivity, d.mouse_invert_y);
     std::fprintf(f, "controller_invert_x=%d\ncontroller_invert_y=%d\n", d.pad_invert_x, d.pad_invert_y);
@@ -633,6 +646,23 @@ void tab_enhancements() {
         bluewake_fast_load_reload();
         changed();
     }
+    if (ImGui::Checkbox("Climb any wall", &d.climb)) {
+        _putenv_s("BLUEWAKE_CLIMB", d.climb ? "1" : "0");
+        bluewake_climb_reload();
+        changed();
+    }
+    ImGui::TextDisabled("    Link climbs a plain wall as he climbs ivy, on a stamina wheel (like Breath of the Wild).");
+    ImGui::BeginDisabled(!d.climb);
+    ImGui::Indent();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 14.0f);
+    if (ImGui::SliderInt("Climbing stamina", &d.climb_stamina, 4, 30, "%d seconds")) {
+        d.climb_stamina = std::clamp(d.climb_stamina, 4, 30);
+        _putenv_s("BLUEWAKE_CLIMB_STAMINA", std::to_string(d.climb_stamina).c_str());
+        bluewake_climb_reload();
+        changed();
+    }
+    ImGui::Unindent();
+    ImGui::EndDisabled();
     ImGui::Spacing();
     if (ImGui::Checkbox("HD texture pack", &d.hd_textures))
         changed();
@@ -792,12 +822,66 @@ void draw_menu(SDL_Window* w) {
         }
         if (ImGui::Button("Close   (F1 or Esc)"))
             open = false;
+        // Save states: taken or put back by the game thread at its next clean
+        // point (main.c's host_state_*), in %APPDATA%\BlueWake\states.
+        ImGui::SameLine();
+        if (ImGui::Button("Save state (F5)")) {
+            bluewake_save_state_hotkey(false);
+            open = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Load latest state (F8)")) {
+            bluewake_save_state_hotkey(true);
+            open = false;
+        }
         overflows = ImGui::GetScrollMaxY() > 4.0f * scale;
     }
     ImGui::End();
     ImGui::PopStyleVar(4);
     if (!open)
         set_menu_open(false);
+}
+
+// The climbing stamina wheel (climb.c), beside Link in the game's picture: the
+// picture is the window's middle at the game's shape, or the whole window when
+// "keep the picture's shape" is off (DOL_AURORA_ASPECT_FIT=0, set at launch).
+void draw_climb_wheel() {
+    float fraction, x, y, aspect, alpha;
+    bool exhausted;
+    if (!bluewake_climb_hud(&fraction, &exhausted, &x, &y, &aspect, &alpha))
+        return;
+    static const bool fit = [] {
+        const char* v = std::getenv("DOL_AURORA_ASPECT_FIT");
+        return v == nullptr || v[0] != '0';
+    }();
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    float w = display.x, h = display.y, x0 = 0.f, y0 = 0.f;
+    if (h <= 0.f || aspect <= 0.f)
+        return;
+    if (fit && w / h > aspect) {
+        w = h * aspect;
+        x0 = (display.x - w) * 0.5f;
+    } else if (fit) {
+        h = w / aspect;
+        y0 = (display.y - h) * 0.5f;
+    }
+    const float radius = h * 0.03f, thick = radius * 0.45f, pi = 3.14159265f;
+    const ImVec2 center(x0 + x * w + radius * 2.4f, y0 + y * h - radius * 0.6f);
+    ImDrawList* list = ImGui::GetForegroundDrawList();
+    const auto a = [alpha](float v) { return static_cast<int>(v * alpha); };
+    list->PathArcTo(center, radius, 0.f, 2.f * pi, 48);
+    list->PathStroke(IM_COL32(20, 30, 20, a(150.f)), 0, thick + 3.f);
+    if (fraction <= 0.002f)
+        return;
+    ImU32 color = IM_COL32(120, 230, 90, a(245.f));  // green
+    if (exhausted) {
+        const float pulse = 0.65f + 0.35f * std::sin(static_cast<float>(ImGui::GetTime()) * 8.f);
+        color = IM_COL32(235, 70, 50, a(245.f * pulse));  // refilling after running out
+    } else if (fraction < 0.25f) {
+        color = IM_COL32(245, 190, 60, a(245.f));  // nearly out
+    }
+    list->PathArcTo(center, radius, -0.5f * pi, -0.5f * pi + 2.f * pi * fraction, 48);
+    list->PathStroke(color, 0, thick);
 }
 
 // For the first few seconds, where the settings and fullscreen are.
@@ -893,6 +977,7 @@ void frame(void*) {
             apply_controller();
         }
     }
+    draw_climb_wheel();
     if (g_menu_open)
         draw_menu(w);
     draw_hint(w);
@@ -981,6 +1066,14 @@ extern "C" void bw_settings_apply_launch(void) {
         d.fast_forward = std::getenv("BLUEWAKE_FAST_FORWARD")[0] != '0';
     else
         env_default("BLUEWAKE_FAST_FORWARD", d.fast_forward ? "1" : "0");
+    if (env_set("BLUEWAKE_CLIMB"))
+        d.climb = std::getenv("BLUEWAKE_CLIMB")[0] == '1';
+    else
+        env_default("BLUEWAKE_CLIMB", d.climb ? "1" : "0");
+    if (env_set("BLUEWAKE_CLIMB_STAMINA"))
+        d.climb_stamina = std::clamp(std::atoi(std::getenv("BLUEWAKE_CLIMB_STAMINA")), 4, 30);
+    else
+        env_default("BLUEWAKE_CLIMB_STAMINA", std::to_string(d.climb_stamina));
     if (env_set("BLUEWAKE_SIMULATION_60HZ"))
         d.native_60hz = std::getenv("BLUEWAKE_SIMULATION_60HZ")[0] == '1';
     else if (d.native_60hz)

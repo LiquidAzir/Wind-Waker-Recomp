@@ -92,6 +92,9 @@ stick zooms the telescope and the Picto Box, the left bumper jumps and a click
 of the left stick sprints. Settings, Controls: the game's own right stick
 instead, the right stick's speeds and directions.
 F1 or Esc settings, F11 or Alt+Enter fullscreen, F10 Smooth Motion, F9 frame rate.
+F5 saves a save state and F8 loads the latest one (%APPDATA%\\BlueWake\\states);
+they belong to this build. Use the game's own save for anything you keep.
+Climbing any wall on a stamina wheel: settings, Mods, "Climb any wall".
 BlueWake.exe --help lists the command-line options.
 
 Saves, settings, the prepared disc and session logs: %APPDATA%\\BlueWake

@@ -69,6 +69,9 @@ this is a static recompilation with a hardware compatibility layer, not an "emul
   and the rest of Wind Waker HD's quality-of-life changes ([Better Wind Waker](https://github.com/WideBoner/betterww))
 - **Quick doors and fast scene changes:** Link goes through doors without the walk-in, and the black
   between areas runs as fast as the computer can
+- **Climb any wall (optional):** Link climbs plain walls the way he climbs ivy, on a stamina wheel,
+  like Breath of the Wild
+- **Save states:** F5 saves the running game and F9 (Mac) or F8 (Windows) loads the latest
 - **Controls:** on Windows and Mac, game controllers with a fast right-stick camera and aiming (the view
   turns directly with the stick, like the mouse, instead of the game's eased camera; its click is first
   person; the left stick zooms the telescope and the Picto Box), keyboard, a mouse camera (click the game,
@@ -109,9 +112,11 @@ Needs Windows 10 or 11 (64-bit), a Direct3D 12 GPU and a CPU with AVX2 (Intel Ha
 | Fullscreen | F11 or Alt+Enter |
 | Smooth Motion on/off | F10 |
 | Frame rate | F9 |
+| Save state, load the latest | F5, F8 |
 
 The settings (F1) have the display (Smooth Motion off/60/120, 60 Hz gameplay, resolution, filtering),
-the controls, the mods (aspect ratio, Better Wind Waker, quick doors, HD textures) and your files.
+the controls, the mods (aspect ratio, Better Wind Waker, quick doors, climbing any wall, HD textures)
+and your files.
 Saves, settings, the prepared disc and session logs are in `%APPDATA%\BlueWake`.
 
 Building it yourself from your disc (Visual Studio's clang, Python, CMake and Ninja): see
