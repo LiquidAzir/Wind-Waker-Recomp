@@ -176,9 +176,10 @@ pulls himself onto, walls he sidles along and blocks he pushes behave as in the 
 
 **Save states.** F5 saves the whole running game to `%APPDATA%\BlueWake\states` and F8 loads the
 latest one (the menu has buttons for both). They are taken at the next moment the game is between frames with
-no scene change, door or memory card write in progress, so one can wait a moment. A state belongs to the build
-that made it: a newer BlueWake, or the Mac app, refuses it. The memory card is not part of a state; use the
-game's own save for anything you want to keep. (On a Mac F9 loads; on Windows F9 is the frame rate.)
+no scene change, door or memory card write in progress, so one can wait a moment. A state is meant for the
+build that made it: another build refuses one made by a different translation of the game or a different
+machine layout. The memory card is not part of a state; use the game's own save for anything you want to
+keep. (On a Mac F9 loads; on Windows F9 is the frame rate.)
 
 **Settings.** F1 opens the settings over the game (it keeps running underneath; the keyboard and mouse work the
 menu until you close it):
