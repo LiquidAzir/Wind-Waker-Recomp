@@ -1,3 +1,69 @@
+## 2026-09-30 The Windows build's GX worker work merged (Mac-tested)
+
+RecompCore 8ab24da (patch 0112) merges the Windows build's RecompCore branch (windows-release, forked
+at 6892947): 4f7a3ec's cheaper worker draws (the derived pipeline state cached by a register version,
+no assembly totals walk, the last pipeline lookup and bind group reused, Smooth Motion jobs without a
+copy for repeated constants and a fence only when the helper may sleep), 825f103 (constant blocks
+compared against a copy off Apple GPUs; the Mac keeps comparing in place), f93c05f (gather-pipe writes
+as a run of bytes, for a game module that batches them), e8c2bb3 (`DOL_AURORA_CACHE_DIR`), 2a85bd1 and
+82607d4 (the graphics threads' CPU time and slow presents in the log). With save states, a register
+state put back from a state takes a fresh derived-cache version (GxCoreState::renew_version).
+
+Mac-tested at the Outset spawn, Smooth Motion 60, an 8 s sample of each release host: the FIFO worker
+55.4 -> 53.2 percent busy (the Windows test PC's efficiency cores went from 23-26 to 29-30 game frames
+a second); 95.6 percent of draws hit the cache, and `DOL_GXCORE_DERIVED_VERIFY=1` finds no mismatch in
+5.7 million hits on a walk nor in 7.0 million after a save state load. The Mac app now keeps its shader
+and pipeline caches in its data folder (`DOL_AURORA_CACHE_DIR`), apart from test runs' (the first launch
+after this compiles them again).
+
+## 2026-09-30 Climbing any wall, on a stamina wheel (Mac-tested, headless)
+
+`runtime/host/src/climb.c`, the options menu's Gameplay tab (`BLUEWAKE_CLIMB=1`, off by default;
+`BLUEWAKE_CLIMB_STAMINA`, 12 seconds). Link climbs steep plain walls with the game's own ivy climbing:
+daPy_lk_c::setFrontWallType classifies the wall in front of him each frame, and a wall of code 1 is ivy
+(mFrontWallType 3, which changeFrontWallTypeProc turns into procClimbUpStart, or procClimbMoveUpDown in
+the air); setMoveBGCorrectClimb checks the code again every climbing frame and drops him when it is not.
+Only calls into another translation unit return through the dispatcher, so the hooks are the return sites
+of the collision queries in those functions: GetWallCode's in setFrontWallType (0x8010F0DC) marks a plain
+wall (code 0) and keeps the collision it hit; the LineCross at grabbing height (0x8010F554) returning a hit
+means the wall goes on above where he grabs ledges, and there the plain wall becomes type 3 (mPolyInfo
+set from the kept collision), under ivy's own conditions (daPyFlg0_UNK100 set, VINE_CATCH clear, 125
+above lava or water, in the air only while steered at it); the only change the game still makes after it
+is to a wall to sidle along, which wins. Ledges he pulls himself onto, ladders, blocks and real ivy keep
+the game's behaviour. In setMoveBGCorrectClimb (0x80135FE4) a plain wall reads as code 1 while there is
+stamina. The wheel drains in 12 seconds climbing (a 0.4 share holding still), empties into a fall and an
+exhaustion that allows no grab until it is full, and refills in 3 seconds after half a second on the
+ground; real ivy costs nothing. It is drawn with ImGui beside Link, projected from the camera's view
+(eye, centre, fovy, aspect) at camera_draw into the game's picture.
+
+Headless, in Orca's house (warp Ojhous:1:0) pushing into the back wall with a 6-second wheel: grabbed at
+the wall (proc 0x3D, then 0x3F), climbed from y -19 to the ceiling at 264, the wheel draining 0.1 every
+0.6 s; empty at 6 s, fell to the floor, no grab while exhausted, full again 3.3 s after landing, and
+grabbed again. The wheel's position came out at Link's (0.50, 0.43-0.56 of the picture). The wheel
+itself and a climb outdoors have not been seen in a window yet.
+
+## 2026-09-30 Save states (Mac-tested)
+
+Dolphin-style save states for debugging (`runtime/host/src/save_state.c`, the host_state_* functions in
+`main.c`; RecompCore: the GX front end's and gxcore's register state, `dol_aurora_gx_save_state` /
+`_load_state` / `_drain`, `dol_hle_callback_idle`, and a Smooth Motion cut after a load). A state is a
+gzip stream of tagged chunks: the CPU, MEM1 (32 MiB), ARAM, every guest alias's storage (linked REL
+data and BSS), the VI clock, the host's device models and milestones by name (150 fields), Dolphin's DSP
+HLE and the GX front end with any half-written command. It is taken at the next GXSetDrawDone return
+with no exception, REL prolog, memory card callback, scene change or quick door in progress, about 20
+MB and half a second; a load takes about 0.1 s. F5 saves (`quick-<retrace>.bwstate` in
+`BLUEWAKE_STATE_DIR`, the Mac app's `states/`), F9 loads the last one, or the newest in that folder after
+a relaunch; the options menu has both. `BLUEWAKE_SAVE_STATE=path@retrace` and `BLUEWAKE_LOAD_STATE=path`
+script them, `BLUEWAKE_STATE_TEST_LOAD=retrace` presses F9. Before replacing memory a load drains the
+FIFO worker, which reads guest memory as it translates.
+
+Checked on the Outset save with a scripted walk: headless, a state saved at retrace 1000 and loaded at
+boot, or mid-run at 900 or 1300, reaches retrace 1500 with every chunk but the renderer's byte for byte
+that of the run that never loaded (MEM1 04F48E8B). With the renderer, a load at boot and one mid-run
+reach the same 1500 as each other (windowed runs' own timing varies between launches), and the first
+frame after a load draws the whole scene. The subagent's first cut (branch wip/save-states) is this
+work's start; it had never been built or run.
+
 ## 2026-09-30 A fast right-stick camera and aiming, and a camera kept out of the ground (Mac-tested)
 
 **The right stick as the camera** (`runtime/host/src/mouse_camera.c`, on by default on the Mac,

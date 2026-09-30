@@ -55,10 +55,28 @@ mouse back. **Esc** (with the mouse free), **F1** or a controller's Back button 
 aspect ratio, fullscreen, render resolution, Smooth Motion (Off, 60 or 120), texture filtering,
 HD texture packs and Better Wind Waker's settings.
 
+## Climbing
+
+**Climb any wall** (Gameplay options, off by default) lets Link climb steep walls the way he climbs ivy,
+as in *Breath of the Wild*: walk or jump into a wall to grab it. A stamina wheel beside him drains while
+he climbs (more slowly while he holds still); when it runs out he lets go, and he can climb again once
+it has refilled on the ground. Ivy, ladders, ledges he pulls himself onto and walls he sidles along work
+as before, and ivy costs no stamina. The wheel's length is set under **Climbing stamina** (12 seconds by
+default).
+
+## Save states
+
+Like an emulator's, a save state keeps the whole running game, to come back to that exact moment:
+**F5** saves one and **F9** loads the latest (on a MacBook keyboard, hold **fn**), or use **Save state**
+and **Load latest state** in the options. They are kept in the data folder's `states/` (about 20 MB
+each) and work across launches of the same version; a state from another version of the app may be
+refused. They are meant for trying things again and for reporting problems; keep saving in the game
+as well.
+
 ## Where your data is
 
 `~/Library/Application Support/Wind Waker Recomp` holds the memory card (`GZLE01.card`), settings
-(`settings.ini`), the files prepared from your disc (`game/`), where your disc is (`disc.txt`) and a log
+(`settings.ini`), save states (`states/`), the compiled shader caches, the files prepared from your disc (`game/`), where your disc is (`disc.txt`) and a log
 per session (`logs/`), and the unpacked `GZLE01.iso` if you chose a compressed image. Replacing the
 app keeps them. To use another disc image, delete `disc.txt`.
 

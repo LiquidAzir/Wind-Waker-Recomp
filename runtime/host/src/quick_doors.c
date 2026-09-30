@@ -148,6 +148,12 @@ static bool g_arrived;
 
 bool bluewake_quick_doors_covered(void) { return g_exiting; }
 
+// A door under way keeps its progress here (and may have changed guest state it
+// changes back later), so a save state waits until none is.
+bool bluewake_quick_doors_busy(void) {
+    return g_door_start != 0u || g_exiting || g_arrived || bluewake_quick_doors_armed;
+}
+
 // BLUEWAKE_DOOR_TEST_FACE=retrace:x:z,... (testing only): at that retrace Link
 // is turned to face the point (x, z), so a press of A opens the door there.
 static struct {

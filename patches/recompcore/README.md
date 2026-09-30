@@ -8,11 +8,13 @@ The build uses a fork instead. BlueWake's is https://github.com/chrissotraidis/R
 `bluewake`, commit 2d6063614a9bc899f6b4d11c7e7b3cd66e4d96f3: it contains the changes here through 0097
 (some were revised by later ones), the files that were never committed on the development Mac, and the
 DolRecomp submodule pointing at https://github.com/chrissotraidis/DolRecomp (5c91d6e). Wind Waker Recomp
-builds from its own copy, https://github.com/elliotttate/RecompCore, branch `windows-release`, commit
-82607d4: branch `bluewake`'s 6892947 (that tree plus 0098 to 0110) and the Windows port's 0111 to 0116
+builds from its own copy, https://github.com/elliotttate/RecompCore, branch `bluewake`, commit
+8ab24da: branch `bluewake`'s 6892947 (that tree plus 0098 to 0110), the Windows port's 0111 to 0116
 (the shader and pipeline caches where the host says, gather-pipe writes as a run of bytes, the GX stall
 watchdog on Mac and Linux only, constant blocks compared against a copy where staging is upload memory,
 the GX worker's draws cheaper for a slower CPU, the graphics threads, slow presents and the CPU in the
-log), with DolRecomp at https://github.com/elliotttate/DolRecomp
+log), and the Mac line's save states and its merge of that Windows work (numbered 0111 and 0112 there,
+before the two lines met: the files named 0111-save-states-... and 0112-merge-windows-release-...),
+with DolRecomp at https://github.com/elliotttate/DolRecomp
 (b8b5345, 5c91d6e plus patches/dolrecomp/0019). The Builder fetches it at the commit pinned in
 `scripts/builder/profiles/bluewake.sh`; see docs/status/DEVICE_BUILD.md.

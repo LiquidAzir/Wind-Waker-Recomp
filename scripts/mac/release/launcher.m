@@ -386,6 +386,12 @@ int main(int argc, char** argv) {
         setenv("BLUEWAKE_CARD_PATH", path, 0);
         snprintf(path, sizeof path, "%s/sram.bin", support);
         setenv("BLUEWAKE_SRAM", path, 0);
+        snprintf(path, sizeof path, "%s/states", support); // F5 / F9 save states
+        setenv("BLUEWAKE_STATE_DIR", path, 0);
+        // The compiled shader and pipeline caches with the rest of the app's
+        // data, not in a folder every copy of the host shares (two copies at
+        // once wrote one SQLite file together, and the Dawn cache broke).
+        setenv("DOL_AURORA_CACHE_DIR", support, 0);
         setenv("BLUEWAKE_CLOCK", "now", 0);
         setenv("BLUEWAKE_RENDERER", "aurora", 0);
         setenv("BLUEWAKE_DSP_MODE", "hle", 0);

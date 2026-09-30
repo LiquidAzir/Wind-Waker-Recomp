@@ -56,7 +56,7 @@ load off those two workers or stops them waiting.
 | 18 | Fast scene changes | a door or exit 2.2 -> 0.63 s | `runtime/host/src/fast_load.c`, 0101 |
 | 19 | Quick doors | a door with a knob 5.1 -> 1.9 s | `runtime/host/src/quick_doors.c` |
 | 20 | Settings read again at start | saved 120 Hz and 16x anisotropy actually apply at launch | 0109 |
-| 21 | GX worker: derived pipeline state cached by a register version | 96 % of draws reuse it; with 22-24, a slower CPU's heavy view 23-26 -> 29-30 game FPS | 0115 |
+| 21 | GX worker: derived pipeline state cached by a register version | 96 % of draws reuse it; with 22-24, a slower CPU's heavy view 23-26 -> 29-30 game FPS; on an M3 Max the worker 55.4 -> 53.2 % busy | 0115 |
 | 22 | GX worker: assembly totals only where read | a walk over every vertex's indices gone from the renderer's consumer | 0115 |
 | 23 | GX worker: pipeline and texture bind group lookups remembered | no `std::function` allocation, hash or lock for a draw that repeats the one before | 0115 |
 | 24 | Smooth Motion hand-off without a copy for repeated constants | a sequentially consistent fence only when the helper may sleep | 0115 |
@@ -377,6 +377,12 @@ events, the next frame's begin), and a slow event pump `[events-slow]` (SDL's pu
 freezes of 0.4 to 1.2 s seen about one run in five on the test PC are SDL's pump waiting on another program:
 when the window's activation changes, Windows waits for the window losing it to answer. The CPU model comes from CPUID (the WMI query failed after the first launch's
 disc picker had set up COM security, and the log read `Unknown`), and `CPU cores:` gives cores and threads.
+
+On an M3 Max, where memory copies and hashes are cheap, the gain is small: the worker 55.4 -> 53.2 percent
+busy at the Outset spawn with Smooth Motion 60 (sampled 8 s each), 95.6 percent of draws hitting the cache,
+and `DOL_GXCORE_DERIVED_VERIFY=1` finding no mismatch in 5.7 million hits on a walk nor in 7.0 million after
+a save state load. The Mac line carries 21-25 as its patch 0112 (RecompCore 8ab24da, merged there from
+RecompCore windows-release 82607d4).
 
 ## Finding slow spots
 

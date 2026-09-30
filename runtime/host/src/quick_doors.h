@@ -26,6 +26,7 @@ void bluewake_quick_doors_reload(void);
 // A door's own fade covers the screen and the scene change it leads to is
 // under way: fast_load.c's fast-forward may run (as in a scene change's black).
 bool bluewake_quick_doors_covered(void);
+bool bluewake_quick_doors_busy(void);
 
 // At every dispatch boundary (the chassis edge service), while a scene change
 // runs (armed): at the new stage's player creation, a knob door's start point

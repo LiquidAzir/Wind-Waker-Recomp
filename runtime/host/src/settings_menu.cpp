@@ -4,11 +4,13 @@
 
 // The host's modules are C.
 extern "C" {
+#include "climb.h"
 #include "fast_load.h"
 #include "game_options.h"
 #include "jump_button.h"
 #include "mouse_camera.h"
 #include "quick_doors.h"
+#include "save_state.h"
 #include "sprint.h"
 #include "simulation_mode.h"
 }
@@ -17,6 +19,8 @@ extern "C" {
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
+
+#include <cmath>
 
 #include <cerrno>
 #include <cstdio>
@@ -48,6 +52,7 @@ const char* const kKeys[] = {
     "BLUEWAKE_SPRINT_SPEED",    "BLUEWAKE_MOUSE_CAMERA",    "BLUEWAKE_MOUSE_SENSITIVITY",
     "BLUEWAKE_MOUSE_INVERT_Y",  "BLUEWAKE_SIMULATION_60HZ", "BLUEWAKE_STICK_CAMERA",    "BLUEWAKE_STICK_CAMERA_SPEED",
     "BLUEWAKE_STICK_CAMERA_INVERT_X", "BLUEWAKE_STICK_CAMERA_INVERT_Y", "BLUEWAKE_STICK_AIM_SPEED",
+    "BLUEWAKE_CLIMB",           "BLUEWAKE_CLIMB_STAMINA",
 };
 
 std::string g_path;                          // the settings file ("" when none)
@@ -350,6 +355,24 @@ void gameplay_tab() {
     }
 
     ImGui::Separator();
+    bool climb = env_on("BLUEWAKE_CLIMB", false);
+    if (ImGui::Checkbox("Climb any wall, on a stamina wheel (like Breath of the Wild)", &climb)) {
+        set_env("BLUEWAKE_CLIMB", climb ? "1" : "0");
+        bluewake_climb_reload();
+    }
+    ImGui::BeginDisabled(!climb);
+    float stamina = static_cast<float>(std::atof(env("BLUEWAKE_CLIMB_STAMINA", "12").c_str()));
+    if (stamina < 1.f)
+        stamina = 12.f;
+    if (ImGui::SliderFloat("Climbing stamina", &stamina, 4.f, 30.f, "%.0f seconds")) {
+        char text[16];
+        std::snprintf(text, sizeof text, "%.0f", stamina);
+        set_env("BLUEWAKE_CLIMB_STAMINA", text);
+        bluewake_climb_reload();
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Separator();
     bool jump = env_on("BLUEWAKE_JUMP_BUTTON", true);
     if (ImGui::Checkbox("Jump button (Space, left bumper)", &jump)) {
         set_env("BLUEWAKE_JUMP_BUTTON", jump ? "1" : "0");
@@ -459,8 +482,45 @@ void test_hook() {
     }
 }
 
+// The climbing stamina wheel (climb.c), beside Link in the game's picture.
+void draw_climb_wheel() {
+    float fraction, x, y, aspect, alpha;
+    bool exhausted;
+    if (!bluewake_climb_hud(&fraction, &exhausted, &x, &y, &aspect, &alpha))
+        return;
+    const ImVec2 display = ImGui::GetIO().DisplaySize;
+    float w = display.x, h = display.y, x0 = 0.f, y0 = 0.f;
+    if (h <= 0.f || aspect <= 0.f)
+        return;
+    if (w / h > aspect) {
+        w = h * aspect;
+        x0 = (display.x - w) * 0.5f;
+    } else {
+        h = w / aspect;
+        y0 = (display.y - h) * 0.5f;
+    }
+    const float radius = h * 0.03f, thick = radius * 0.45f, pi = 3.14159265f;
+    const ImVec2 center(x0 + x * w + radius * 2.4f, y0 + y * h - radius * 0.6f);
+    ImDrawList* list = ImGui::GetForegroundDrawList();
+    const auto a = [alpha](float v) { return static_cast<int>(v * alpha); };
+    list->PathArcTo(center, radius, 0.f, 2.f * pi, 48);
+    list->PathStroke(IM_COL32(20, 30, 20, a(150.f)), 0, thick + 3.f);
+    if (fraction <= 0.002f)
+        return;
+    ImU32 color = IM_COL32(120, 230, 90, a(245.f)); // green
+    if (exhausted) {
+        const float pulse = 0.65f + 0.35f * std::sin(static_cast<float>(ImGui::GetTime()) * 8.f);
+        color = IM_COL32(235, 70, 50, a(245.f * pulse)); // refilling after running out
+    } else if (fraction < 0.25f) {
+        color = IM_COL32(245, 190, 60, a(245.f)); // nearly out
+    }
+    list->PathArcTo(center, radius, -0.5f * pi, -0.5f * pi + 2.f * pi * fraction, 48);
+    list->PathStroke(color, 0, thick);
+}
+
 void draw(void*) {
     test_hook();
+    draw_climb_wheel();
     if (!g_open)
         return;
     ImGuiIO& io = ImGui::GetIO();
@@ -498,6 +558,18 @@ void draw(void*) {
             ImGui::TextDisabled("Saved to %s", g_path.c_str());
         if (ImGui::Button("Resume"))
             open = false;
+        ImGui::SameLine();
+        // Save states (debugging): taken or put back at the game's next clean
+        // point once the menu has closed (main.c's host_state_*).
+        if (ImGui::Button("Save state (F5)")) {
+            bluewake_save_state_hotkey(false);
+            open = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Load latest state (F9)")) {
+            bluewake_save_state_hotkey(true);
+            open = false;
+        }
         ImGui::SameLine();
         if (ImGui::Button("Quit the game")) {
             close_menu();

@@ -1,6 +1,7 @@
 #include "mouse_camera.h"
 #include "jump_button.h"
 #include "settings_menu.h"
+#include "save_state.h"
 
 #include "gxruntime/aurora_backend.h"
 
@@ -224,6 +225,17 @@ static void observe(const void* sdl_event, void* user) {
     // while it is open its keys are not the game's (Space jumps).
     if (!g_blocked)
         bluewake_jump_button_event(sdl_event);
+    // Save states: F5 saves, F9 loads the last one (main.c). On Windows F8
+    // loads: F9 is the frame rate there (windows/src/win_settings.cpp), and a
+    // press meant for it must not take the game back to an older state.
+#if defined(_WIN32)
+    const SDL_Scancode load_state_key = SDL_SCANCODE_F8;
+#else
+    const SDL_Scancode load_state_key = SDL_SCANCODE_F9;
+#endif
+    if (event->type == SDL_EVENT_KEY_DOWN && !event->key.repeat &&
+        (event->key.scancode == SDL_SCANCODE_F5 || event->key.scancode == load_state_key))
+        bluewake_save_state_hotkey(event->key.scancode == load_state_key);
     if (!g_enabled)
         return;
     switch (event->type) {

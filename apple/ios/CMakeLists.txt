@@ -37,6 +37,7 @@ set(BLUEWAKE_HOST_SOURCES
     ${BLUEWAKE_HOST_SRC}/fast_load.c
     ${BLUEWAKE_HOST_SRC}/fps_watch.c
     ${BLUEWAKE_HOST_SRC}/jump_button.c
+    ${BLUEWAKE_HOST_SRC}/climb.c
     ${BLUEWAKE_HOST_SRC}/sprint.c
     ${BLUEWAKE_HOST_SRC}/quick_doors.c
     ${BLUEWAKE_HOST_SRC}/draw_tags.c
@@ -50,7 +51,8 @@ set(BLUEWAKE_HOST_SOURCES
     ${BLUEWAKE_HOST_SRC}/pad_waypoint.c
     ${BLUEWAKE_HOST_SRC}/pad_wire.c
     ${BLUEWAKE_HOST_SRC}/rel_scratch_allocator.c
-    ${BLUEWAKE_HOST_SRC}/scheduler_contract.c)
+    ${BLUEWAKE_HOST_SRC}/scheduler_contract.c
+    ${BLUEWAKE_HOST_SRC}/save_state.c)
 
 add_executable(BlueWake MACOSX_BUNDLE
     src/ios_entry.m
@@ -66,7 +68,7 @@ add_executable(BlueWake MACOSX_BUNDLE
 # owns main() so SDL can start UIApplicationMain first.
 set_source_files_properties(${BLUEWAKE_HOST_SRC}/main.c PROPERTIES
     COMPILE_DEFINITIONS "main=bluewake_host_main")
-target_link_libraries(BlueWake PRIVATE gxruntime GXRuntime::aurora)
+target_link_libraries(BlueWake PRIVATE gxruntime GXRuntime::aurora z)
 set_target_properties(BlueWake PROPERTIES
     LINKER_LANGUAGE CXX
     OUTPUT_NAME BlueWake

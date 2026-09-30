@@ -41,6 +41,9 @@
 #include "rel_scratch_allocator.h"
 #include "return_census.h"
 #include "scheduler_contract.h"
+#include "save_state.h"
+#include "climb.h"
+#include "gxruntime/hle.h"
 #include <aurora/gfx.h>
 #include "external_memory.h"
 #include "fpu_context.h"
@@ -50,6 +53,7 @@
 
 #include <dlfcn.h>
 #include <dirent.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -129,6 +133,18 @@ static pthread_mutex_t g_guest_alias_lock = PTHREAD_MUTEX_INITIALIZER;
 // under one count holds until the next (host_graphics_guest_resolve's cache).
 static volatile u32 g_guest_alias_changes;
 
+// Every guest alias the host has registered, in registration order: a save
+// state writes each one's storage (linked REL data and BSS live there, not in
+// MEM1), and a load registers any the state has that this run has not yet
+// (module 336's BSS is added only when that module is linked).
+#define HOST_STATE_MAX_ALIASES 4096u
+typedef struct HostStateAlias {
+    u32 linked_start;
+    u32 size;
+} HostStateAlias;
+static HostStateAlias g_state_aliases[HOST_STATE_MAX_ALIASES];
+static u32 g_state_alias_count;
+
 static bool host_add_shared_guest_alias(u32 linked_start, u32 size,
                                         const u8* initial_bytes) {
     u8* storage = NULL;
@@ -144,8 +160,12 @@ static bool host_add_shared_guest_alias(u32 linked_start, u32 size,
     pthread_mutex_unlock(&g_guest_alias_lock);
     if (!added)
         return false;
-    if (g_module_alias_add_shared(linked_start, size, storage))
+    if (g_module_alias_add_shared(linked_start, size, storage)) {
+        if (g_state_alias_count < HOST_STATE_MAX_ALIASES)
+            g_state_aliases[g_state_alias_count++] =
+                (HostStateAlias){linked_start, size};
         return true;
+    }
     pthread_mutex_lock(&g_guest_alias_lock);
     ppc_guest_alias_remove(linked_start, size);
     g_guest_alias_changes++;
@@ -1746,6 +1766,7 @@ __attribute__((noinline)) static void host_actor_search_native(CPUState* cpu) {
 
 static bool host_chassis_edge_service(void* user, CPUState* cpu, u32 address) {
     bluewake_mouse_camera_dispatch(cpu, address);
+    bluewake_climb_dispatch(cpu, address);
     bluewake_quick_doors_dispatch(cpu, address);
     bluewake_draw_tags_dispatch(cpu, address);
     if (bluewake_jump_button_dispatch(cpu, address))
@@ -5724,6 +5745,718 @@ static void host_apply_aspect(void) {
     fprintf(stderr, "[aspect] %s: mod %s, frame buffer %s\n", aspect, mod, getenv("DOL_AURORA_ASPECT_RATIO"));
 }
 
+// ---------------------------------------------------------------------------
+// Save states (debugging): the running game written to a file and read back,
+// Dolphin-style, so a rendering or performance problem can be reproduced at
+// the spot it happens instead of by replaying a route.
+//
+//   BLUEWAKE_SAVE_STATE=path@retrace[,path@retrace...]
+//       save at the first clean point at or after that retrace (see below);
+//   BLUEWAKE_LOAD_STATE=path
+//       restore right after boot, before the first guest instruction runs;
+//   F5 / F9 (the window; fn-F5 / fn-F9 on a Mac keyboard), or the options
+//   menu's Save state / Load latest state
+//       save to BLUEWAKE_STATE_DIR (default: the working directory; the Mac
+//       app's is its data folder's states/) as quick-<retrace>.bwstate / load
+//       the last state saved or loaded in this run, else the newest .bwstate
+//       in that directory (after a relaunch).
+//   BLUEWAKE_LOAD_STATE_FORCE=1 loads a state made by another translation of
+//       the game (a different composite), which is otherwise refused.
+//   BLUEWAKE_STATE_TEST_LOAD=retrace (testing) presses F9 at that retrace.
+//
+// Checked (headless, the Outset save walked by a pad script): a state saved
+// at retrace 1000 and loaded at boot, or mid-run at 900 or 1300, reaches
+// retrace 1500 with MEM1, ARAM, the CPU, the aliases, the DSP and the host
+// variables byte for byte those of the run that never loaded; with the
+// renderer, a load at boot and one mid-run reach the same 1500 as each other
+// (a windowed run's own timing varies from launch to launch).
+//
+// Where the whole machine is. Between host turns the guest's entire state is
+// CPUState plus memory: the chassis returns to the host at block boundaries
+// with nothing of the guest on the host stack (a turn can end at any block and
+// the next dispatch resumes there, which is what OS thread switches already
+// rely on). So a state is taken at the top of a host turn, and holds:
+//   CPUState's register prefix (everything before the first host pointer);
+//   MEM1 as the host expands it (32 MiB: linked REL code/data above 24 MiB);
+//   ARAM (16 MiB); the storage of every guest alias (linked REL data and BSS);
+//   the VI clock; the host's device models (PI/VI interrupts, SI, DI, AI and
+//   DSP DMA, ARAM DMA, IPL SRAM, the virtual pads), the DSP mail handshake,
+//   the guest clock and decrementer, the cycle domain and device cursors, the
+//   REL alias/slot registries, the route automation's progress and the
+//   milestones the host's per-pc hooks depend on (HOSTVARS, by name);
+//   Dolphin's DSP HLE (DSPHLE::DoState through a PointerWrap);
+//   the GX front end's register model (CP/XF/BP, TMEM palettes) plus the bytes
+//   of any GX command the guest has not finished writing, and the gxcore sink's
+//   register state. Without these a frame after a load would be decoded with
+//   vertex formats the game set before the save, and the first draw would fail
+//   the front end for good.
+// Rebuilt instead of saved: the renderer's texture and pipeline caches, EFB
+// copies, the in-between (Smooth Motion) frame history, the audio queue, the
+// dispatcher's pc cache.
+//
+// When. A save waits for a clean point: the top of a turn whose pc is
+// GXSetDrawDone's return (0x80322BC8) - the frame's GX commands are complete,
+// so after a load the next frame is drawn whole - with no exception pending,
+// no REL prolog half done, no HLE card callback queued or running, no scene
+// change (overlap) or quick door under way. A request that has not met a
+// draw-done point within 120 retraces takes the next clean retrace boundary
+// instead (the GX front end carries any partial command either way).
+#define HOST_STATE_DRAW_DONE_PC 0x80322BC8u
+#define HOST_STATE_MAX_REQUESTS 8u
+
+typedef struct HostStateLoop {
+    bool* profile_prolog_called;
+    bool* rel_prolog_sda_pending;
+    u32* rel_prolog_saved_r13;
+} HostStateLoop;
+
+typedef struct HostStateRequest {
+    char path[1024];
+    u64 retrace;
+    bool done;
+} HostStateRequest;
+
+static HostStateRequest g_state_requests[HOST_STATE_MAX_REQUESTS];
+static u32 g_state_request_count;
+static volatile bool g_state_hotkey_save;
+static volatile bool g_state_hotkey_load;
+static bool g_state_save_armed;
+static u64 g_state_armed_retrace;
+static u64 g_state_poll_retrace = UINT64_MAX;
+static bool g_state_aurora;
+static char g_state_last_path[1024];
+static unsigned g_state_refusals;
+
+typedef struct HostStateHeader {
+    u32 version;
+    u32 cpu_state_size;
+    u32 cpu_pod_size;
+    u32 entry_point;
+    u32 chunk_count;
+    u32 ram_size;
+    u64 chunk_digest;
+    u64 retrace;
+    u32 pc;
+    u32 mod_mask;
+    u32 dsp_hle;
+    u32 aurora;
+    char game_id[8];
+} HostStateHeader;
+
+#define HS_FIELD(x) {#x, (void*)&(x), (uint32_t)sizeof(x)}
+static const BwStateField k_host_state_fields[] = {
+    // REL links: raw images, their executable aliases and scratch slots.
+    HS_FIELD(g_rel_aliases), HS_FIELD(g_rel_alias_count),
+    HS_FIELD(g_rel_alias_raw_min), HS_FIELD(g_rel_alias_raw_max),
+    HS_FIELD(g_module1_raw_base), HS_FIELD(g_module336_bss_alias_installed),
+    HS_FIELD(g_rel_slots),
+    // The DSP mail handshake the host models around the DSP.
+    HS_FIELD(g_dsp_control), HS_FIELD(g_dsp_aram_complete), HS_FIELD(g_dsp_mail_from),
+    HS_FIELD(g_dsp_mail_from_pending), HS_FIELD(g_dsp_mail_reads_remaining),
+    HS_FIELD(g_dsp_mail_to_high_seen), HS_FIELD(g_dsp_boot_mail_armed),
+    HS_FIELD(g_dsp_boot_mail_clear_seen), HS_FIELD(g_dsp_boot_handshake_sent),
+    HS_FIELD(g_dsp_task_handshake_sent), HS_FIELD(g_dsp_task_request_pending),
+    HS_FIELD(g_dsp_task_request_armed), HS_FIELD(g_dsp_boot_task_ready),
+    HS_FIELD(g_dsp_task_boot_started), HS_FIELD(g_dsp_audio_frame_words_remaining),
+    HS_FIELD(g_dsp_mail_to_high_value),
+    // Device models.
+    HS_FIELD(g_audio_dma), HS_FIELD(g_interrupts), HS_FIELD(g_si),
+    HS_FIELD(g_virtual_pad), HS_FIELD(g_aram_dma),
+    HS_FIELD(g_ipl_sram.sram), HS_FIELD(g_ipl_sram.status),
+    HS_FIELD(g_ipl_sram.dma_address), HS_FIELD(g_ipl_sram.dma_length),
+    HS_FIELD(g_ipl_sram.control), HS_FIELD(g_ipl_sram.data),
+    HS_FIELD(g_ipl_sram.command_latched), HS_FIELD(g_ipl_sram.write),
+    HS_FIELD(g_ipl_sram.cursor), HS_FIELD(g_ipl_sram.sram_region),
+    HS_FIELD(g_ipl_sram.writes),
+    HS_FIELD(g_di.status), HS_FIELD(g_di.cover), HS_FIELD(g_di.command),
+    HS_FIELD(g_di.dma_address), HS_FIELD(g_di.dma_length), HS_FIELD(g_di.control),
+    HS_FIELD(g_di.immediate_data), HS_FIELD(g_di.config),
+    // Guest time: the decrementer, the cycle domain and each device's cursor.
+    HS_FIELD(g_guest_clock_decrementer), HS_FIELD(g_guest_clock_decrementer_valid),
+    HS_FIELD(g_guest_clock_decrementer_expired), HS_FIELD(g_guest_clock_cycle_remainder),
+    HS_FIELD(g_guest_decrementer_pending),
+    HS_FIELD(g_cycle_domain.absolute_cycles), HS_FIELD(g_cycle_domain.dispatch_cycles),
+    HS_FIELD(g_vi_cycle_cursor), HS_FIELD(g_audio_cycle_cursor), HS_FIELD(g_dsp_cycle_cursor),
+    HS_FIELD(g_dsp_adapter_interrupt_pending), HS_FIELD(g_dsp_adapter_slice_cycles),
+    HS_FIELD(g_dsp_adapter_update_elapsed), HS_FIELD(g_dsp_adapter_dma_count),
+    HS_FIELD(g_host_retrace_count), HS_FIELD(g_previous_retrace_timebase), HS_FIELD(g_vi_assert_reports),
+    HS_FIELD(g_context_shadows), HS_FIELD(g_delivery_digest),
+    HS_FIELD(g_async_draw_done_commits),
+    // Milestones: several of the host's per-pc hooks only act before or after
+    // one (the edge service, the route's pulses).
+    HS_FIELD(g_title_ready_reported), HS_FIELD(g_title_ready_retrace),
+    HS_FIELD(g_file_select_reported), HS_FIELD(g_file_select_retrace),
+    HS_FIELD(g_name_scene_create_reported), HS_FIELD(g_name_scene_create_retrace),
+    HS_FIELD(g_name_scene_object), HS_FIELD(g_name_scene_execute_reported),
+    HS_FIELD(g_name_scene_execute_retrace), HS_FIELD(g_memcard_check_reported),
+    HS_FIELD(g_memcard_check_retrace), HS_FIELD(g_new_game_intro_reported),
+    HS_FIELD(g_new_game_intro_retrace), HS_FIELD(g_name_input_complete_reported),
+    HS_FIELD(g_name_input_complete_retrace), HS_FIELD(g_name_scene_change_reported),
+    HS_FIELD(g_name_scene_change_retrace), HS_FIELD(g_open_scene_request_reported),
+    HS_FIELD(g_open_scene_request_retrace), HS_FIELD(g_play_scene_reported),
+    HS_FIELD(g_play_scene_retrace), HS_FIELD(g_opening_complete_reported),
+    HS_FIELD(g_opening_complete_retrace), HS_FIELD(g_outset_room_requested),
+    HS_FIELD(g_outset_room_request_retrace), HS_FIELD(g_overlap_last_phase),
+    HS_FIELD(g_overlap_terminal_phase), HS_FIELD(g_name_character_jut_hold_reported),
+    HS_FIELD(g_name_character_jut_trigger_reported),
+    HS_FIELD(g_name_character_cpad_hold_reported),
+    HS_FIELD(g_name_character_cpad_trigger_reported),
+    // The route automation's progress (the pad script itself, BLUEWAKE_PAD_SCRIPT
+    // and run_host.sh's EXTRA_PAD, comes from the loading run's environment).
+    HS_FIELD(g_title_pad_pulse), HS_FIELD(g_title_confirm_pulse),
+    HS_FIELD(g_no_card_dismiss_pulse), HS_FIELD(g_no_save_left_pulse),
+    HS_FIELD(g_player_stick_x_pulse), HS_FIELD(g_player_stick_y_pulse),
+    HS_FIELD(g_player_waypoint_active), HS_FIELD(g_player_ladder_entered),
+    HS_FIELD(g_player_ladder_move_seen), HS_FIELD(g_player_post_ladder_route),
+    HS_FIELD(g_player_post_ladder_route_started), HS_FIELD(g_player_post_ladder_route_active),
+    HS_FIELD(g_player_post_ladder_route_complete),
+    HS_FIELD(g_player_post_ladder_route_arrival_retrace),
+    HS_FIELD(g_player_route_confirm_pulse), HS_FIELD(g_player_route_confirm_triggered),
+    HS_FIELD(g_event_confirm_pulse), HS_FIELD(g_event_confirm_prompt_active),
+    HS_FIELD(g_event_confirm_demo_prompt_active), HS_FIELD(g_no_save_confirm_pulse),
+    HS_FIELD(g_file_slot_select_pulse), HS_FIELD(g_file_start_pulse),
+    HS_FIELD(g_name_character_pulse), HS_FIELD(g_name_end_pulse),
+    HS_FIELD(g_name_confirm_pulse), HS_FIELD(g_save_start_pulse),
+    HS_FIELD(g_save_confirm_pulse), HS_FIELD(g_save_page_pulse),
+    HS_FIELD(g_save_stick_x_pulse), HS_FIELD(g_save_stick_y_pulse),
+    HS_FIELD(g_save_route_state), HS_FIELD(g_save_route_hold),
+    HS_FIELD(g_save_route_retries), HS_FIELD(g_save_route_steps),
+    HS_FIELD(g_save_route_control_retrace), HS_FIELD(g_save_route_next_retrace),
+    HS_FIELD(g_save_route_menu_retrace), HS_FIELD(g_save_route_item),
+    HS_FIELD(g_save_route_mode), HS_FIELD(g_save_route_proc),
+    HS_FIELD(g_save_route_status), HS_FIELD(g_save_route_acted_proc),
+    HS_FIELD(g_save_route_acted_status), HS_FIELD(g_save_route_acted_retrace),
+    HS_FIELD(g_save_route_right_sent), HS_FIELD(g_save_trigger_start_retrace),
+    HS_FIELD(g_save_trigger_length), HS_FIELD(g_save_trigger_value),
+    HS_FIELD(g_save_route_page_presses), HS_FIELD(g_save_route_script_suppressed),
+    HS_FIELD(g_live_takeover), HS_FIELD(g_player_route_waiting),
+};
+#undef HS_FIELD
+
+static u64 host_state_chunk_digest(const StaticRecompModuleDesc* mod) {
+    return bw_state_hash(mod->chunk_hashes,
+                         (size_t)mod->num_chunk_ranges * sizeof(u64), 0u);
+}
+
+static void host_state_header(HostStateHeader* header, const CPUState* cpu,
+                              const StaticRecompModuleDesc* mod) {
+    memset(header, 0, sizeof(*header));
+    header->version = 1u;
+    header->cpu_state_size = (u32)sizeof(CPUState);
+    header->cpu_pod_size = (u32)offsetof(CPUState, external_read);
+    header->entry_point = mod->entry_point;
+    header->chunk_count = mod->num_chunk_ranges;
+    header->ram_size = cpu->ram_size;
+    header->chunk_digest = host_state_chunk_digest(mod);
+    header->retrace = g_host_retrace_count;
+    header->pc = cpu->pc;
+    header->mod_mask = g_mod_mask;
+#ifdef BLUEWAKE_HAS_DSP_ADAPTER
+    header->dsp_hle = bluewake_dsp_adapter_is_hle(g_dsp_adapter) ? 1u : 0u;
+#endif
+    header->aurora = g_state_aurora ? 1u : 0u;
+    memcpy(header->game_id, mod->game_id, sizeof header->game_id);
+}
+
+static u64 host_state_now_us(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (u64)now.tv_sec * 1000000ull + (u64)now.tv_nsec / 1000ull;
+}
+
+static bool host_state_save(const char* path, CPUState* cpu,
+                            const StaticRecompModuleDesc* mod,
+                            const HostStateLoop* loop) {
+    const u64 start_us = host_state_now_us();
+    // The GX blob first: it drains the translation worker (and may present the
+    // frame it finished), which touches no guest state.
+    void* gx = NULL;
+    const size_t gx_size = g_state_aurora ? dol_aurora_gx_save_state(&gx) : 0u;
+    if (g_state_aurora && gx_size == 0u)
+        fprintf(stderr, "[state] warning: no GX front-end state (renderer path off or failed)\n");
+    BwStateWriter* writer = bw_state_writer_open(path);
+    if (writer == NULL) {
+        fprintf(stderr, "[state] cannot write %s\n", path);
+        free(gx);
+        return false;
+    }
+    HostStateHeader header;
+    host_state_header(&header, cpu, mod);
+    bool ok = bw_state_write_chunk(writer, "HEADER", &header, sizeof header);
+    ok = ok && bw_state_write_chunk(writer, "CPU", cpu, header.cpu_pod_size);
+    ok = ok && bw_state_write_chunk(writer, "MEM1", cpu->ram, cpu->ram_size);
+    if (aram_buffer() != NULL)
+        ok = ok && bw_state_write_chunk(writer, "ARAM", aram_buffer(), ARAM_SIZE);
+    // Aliases: count, then (start, size, bytes) in registration order.
+    u64 alias_bytes = 4u;
+    for (u32 i = 0; i < g_state_alias_count; ++i)
+        alias_bytes += 8u + g_state_aliases[i].size;
+    u8* aliases = (u8*)malloc((size_t)alias_bytes);
+    if (aliases == NULL) {
+        ok = false;
+    } else {
+        u8* at = aliases;
+        memcpy(at, &g_state_alias_count, 4u);
+        at += 4u;
+        for (u32 i = 0; i < g_state_alias_count && ok; ++i) {
+            u8* storage = NULL;
+            const HostStateAlias alias = g_state_aliases[i];
+            if (!ppc_guest_alias_get_storage(alias.linked_start, alias.size, &storage) ||
+                storage == NULL) {
+                fprintf(stderr, "[state] alias 0x%08X+0x%X has no storage\n",
+                        alias.linked_start, alias.size);
+                ok = false;
+                break;
+            }
+            memcpy(at, &alias.linked_start, 4u);
+            memcpy(at + 4u, &alias.size, 4u);
+            memcpy(at + 8u, storage, alias.size);
+            at += 8u + alias.size;
+        }
+        ok = ok && bw_state_write_chunk(writer, "ALIASES", aliases, alias_bytes);
+        free(aliases);
+    }
+    if (g_cycle_vi_clock != NULL)
+        ok = ok && bw_state_write_chunk(writer, "VICLOCK", g_cycle_vi_clock,
+                                        sizeof(*g_cycle_vi_clock));
+    u8* vars = NULL;
+    u64 vars_size = 0u;
+    if (bw_state_fields_pack(k_host_state_fields,
+                             (u32)(sizeof k_host_state_fields / sizeof k_host_state_fields[0]),
+                             &vars, &vars_size)) {
+        ok = ok && bw_state_write_chunk(writer, "HOSTVARS", vars, vars_size);
+        free(vars);
+    } else {
+        ok = false;
+    }
+    const BwStateField loop_fields[] = {
+        {"profile_prolog_called", loop->profile_prolog_called, sizeof(bool)},
+        {"rel_prolog_sda_pending", loop->rel_prolog_sda_pending, sizeof(bool)},
+        {"rel_prolog_saved_r13", loop->rel_prolog_saved_r13, sizeof(u32)},
+    };
+    if (bw_state_fields_pack(loop_fields, 3u, &vars, &vars_size)) {
+        ok = ok && bw_state_write_chunk(writer, "LOOPVARS", vars, vars_size);
+        free(vars);
+    } else {
+        ok = false;
+    }
+#ifdef BLUEWAKE_HAS_DSP_ADAPTER
+    if (g_dsp_adapter != NULL) {
+        if (!bluewake_dsp_adapter_is_hle(g_dsp_adapter)) {
+            fprintf(stderr, "[state] warning: the DSP runs LLE, whose state is not saved "
+                            "(BLUEWAKE_DSP_MODE=hle); audio will not survive a load\n");
+        } else {
+            u8* dsp = NULL;
+            const size_t dsp_size = bluewake_dsp_adapter_save_state(g_dsp_adapter, &dsp);
+            if (dsp_size == 0u) {
+                fprintf(stderr, "[state] DSP HLE state failed\n");
+                ok = false;
+            } else {
+                ok = ok && bw_state_write_chunk(writer, "DSPHLE", dsp, dsp_size);
+            }
+            free(dsp);
+        }
+    }
+#endif
+    if (gx_size != 0u)
+        ok = ok && bw_state_write_chunk(writer, "GX", gx, gx_size);
+    free(gx);
+    ok = bw_state_writer_close(writer) && ok;
+    if (!ok) {
+        fprintf(stderr, "[state] save to %s failed\n", path);
+        return false;
+    }
+    snprintf(g_state_last_path, sizeof g_state_last_path, "%s", path);
+    FILE* file = fopen(path, "rb");
+    long file_size = -1;
+    if (file != NULL) {
+        fseek(file, 0, SEEK_END);
+        file_size = ftell(file);
+        fclose(file);
+    }
+    fprintf(stderr,
+            "[state] saved %s retrace=%llu pc=0x%08X mem1=0x%08X aliases=%u gx=%zu "
+            "bytes=%ld ms=%llu\n",
+            path, (unsigned long long)g_host_retrace_count, cpu->pc,
+            (u32)bw_state_hash(cpu->ram, cpu->ram_size, 0u), g_state_alias_count,
+            gx_size, file_size,
+            (unsigned long long)((host_state_now_us() - start_us) / 1000u));
+    return true;
+}
+
+static bool host_state_load(const char* path, CPUState* cpu,
+                            const StaticRecompModuleDesc* mod,
+                            const HostStateLoop* loop) {
+    const u64 start_us = host_state_now_us();
+    BwStateReader reader;
+    if (!bw_state_reader_open(&reader, path))
+        return false;
+    bool ok = false;
+    const BwStateChunk* chunk = bw_state_find(&reader, "HEADER");
+    HostStateHeader saved;
+    HostStateHeader here;
+    host_state_header(&here, cpu, mod);
+    if (chunk == NULL || chunk->size != sizeof saved) {
+        fprintf(stderr, "[state] %s has no usable header\n", path);
+        goto done;
+    }
+    memcpy(&saved, chunk->data, sizeof saved);
+    if (saved.version != here.version || saved.cpu_state_size != here.cpu_state_size ||
+        saved.cpu_pod_size != here.cpu_pod_size || saved.ram_size != here.ram_size) {
+        fprintf(stderr,
+                "[state] %s does not fit this host (version %u/%u, CPUState %u/%u, "
+                "RAM 0x%X/0x%X)\n",
+                path, saved.version, here.version, saved.cpu_state_size,
+                here.cpu_state_size, saved.ram_size, here.ram_size);
+        goto done;
+    }
+    if (saved.chunk_digest != here.chunk_digest || saved.chunk_count != here.chunk_count ||
+        memcmp(saved.game_id, here.game_id, sizeof saved.game_id) != 0) {
+        const char* force = getenv("BLUEWAKE_LOAD_STATE_FORCE");
+        fprintf(stderr,
+                "[state] %s was made by another translation of the game "
+                "(chunks %u/%u, digest %016llX/%016llX)%s\n",
+                path, saved.chunk_count, here.chunk_count,
+                (unsigned long long)saved.chunk_digest,
+                (unsigned long long)here.chunk_digest,
+                force != NULL && force[0] == '1' ? "; loading anyway (FORCE)" : "");
+        if (force == NULL || force[0] != '1')
+            goto done;
+    }
+    if (saved.mod_mask != here.mod_mask)
+        fprintf(stderr,
+                "[state] warning: saved with mods 0x%X, this run has 0x%X (their code "
+                "differs; per-frame mod writes follow this run)\n",
+                saved.mod_mask, here.mod_mask);
+    if (saved.dsp_hle != here.dsp_hle)
+        fprintf(stderr, "[state] warning: saved with DSP %s, this run is %s\n",
+                saved.dsp_hle ? "HLE" : "LLE/off", here.dsp_hle ? "HLE" : "LLE/off");
+
+    chunk = bw_state_find(&reader, "CPU");
+    if (chunk == NULL || chunk->size != saved.cpu_pod_size) {
+        fprintf(stderr, "[state] %s: CPU chunk missing\n", path);
+        goto done;
+    }
+    const BwStateChunk* mem1 = bw_state_find(&reader, "MEM1");
+    if (mem1 == NULL || mem1->size != cpu->ram_size) {
+        fprintf(stderr, "[state] %s: MEM1 chunk missing\n", path);
+        goto done;
+    }
+    // Past this point the machine is being replaced; a failure is reported
+    // and the load stops, which leaves an inconsistent machine. The FIFO
+    // worker finishes what it has first: it reads guest memory (display
+    // lists, vertex arrays, textures) as it translates.
+    if (g_state_aurora)
+        dol_aurora_gx_drain();
+    memcpy(cpu, chunk->data, saved.cpu_pod_size);
+    memcpy(cpu->ram, mem1->data, cpu->ram_size);
+    chunk = bw_state_find(&reader, "ARAM");
+    if (chunk != NULL && aram_buffer() != NULL && chunk->size == ARAM_SIZE)
+        memcpy(aram_buffer(), chunk->data, ARAM_SIZE);
+    else
+        fprintf(stderr, "[state] warning: no ARAM in the state\n");
+
+    chunk = bw_state_find(&reader, "ALIASES");
+    if (chunk == NULL || chunk->size < 4u) {
+        fprintf(stderr, "[state] %s: alias chunk missing\n", path);
+        goto done;
+    }
+    {
+        u32 count = 0u;
+        memcpy(&count, chunk->data, 4u);
+        u64 offset = 4u;
+        u32 added = 0u;
+        for (u32 i = 0; i < count; ++i) {
+            if (offset + 8u > chunk->size) {
+                fprintf(stderr, "[state] %s: alias chunk truncated\n", path);
+                goto done;
+            }
+            u32 start = 0u, size = 0u;
+            memcpy(&start, chunk->data + offset, 4u);
+            memcpy(&size, chunk->data + offset + 4u, 4u);
+            offset += 8u;
+            if (offset + size > chunk->size) {
+                fprintf(stderr, "[state] %s: alias chunk truncated\n", path);
+                goto done;
+            }
+            u8* storage = NULL;
+            if (!ppc_guest_alias_get_storage(start, size, &storage) || storage == NULL) {
+                // Registered later in the saving run (module 336's BSS).
+                if (!host_add_shared_guest_alias(start, size, NULL) ||
+                    !ppc_guest_alias_get_storage(start, size, &storage) || storage == NULL) {
+                    fprintf(stderr, "[state] cannot register alias 0x%08X+0x%X\n", start, size);
+                    goto done;
+                }
+                added++;
+            }
+            memcpy(storage, chunk->data + offset, size);
+            offset += size;
+        }
+        if (count != g_state_alias_count)
+            fprintf(stderr, "[state] aliases: %u in the state, %u here (%u added)\n", count,
+                    g_state_alias_count, added);
+    }
+
+    chunk = bw_state_find(&reader, "VICLOCK");
+    if (chunk != NULL && g_cycle_vi_clock != NULL && chunk->size == sizeof(*g_cycle_vi_clock))
+        memcpy(g_cycle_vi_clock, chunk->data, sizeof(*g_cycle_vi_clock));
+    else
+        fprintf(stderr, "[state] warning: no VI clock in the state\n");
+
+    chunk = bw_state_find(&reader, "HOSTVARS");
+    uint32_t restored = 0u, missing = 0u, mismatched = 0u;
+    if (chunk == NULL ||
+        !bw_state_fields_unpack(k_host_state_fields,
+                                (u32)(sizeof k_host_state_fields / sizeof k_host_state_fields[0]),
+                                chunk->data, chunk->size, &restored, &missing, &mismatched)) {
+        fprintf(stderr, "[state] %s: host variables unreadable\n", path);
+        goto done;
+    }
+    chunk = bw_state_find(&reader, "LOOPVARS");
+    if (chunk != NULL) {
+        const BwStateField loop_fields[] = {
+            {"profile_prolog_called", loop->profile_prolog_called, sizeof(bool)},
+            {"rel_prolog_sda_pending", loop->rel_prolog_sda_pending, sizeof(bool)},
+            {"rel_prolog_saved_r13", loop->rel_prolog_saved_r13, sizeof(u32)},
+        };
+        (void)bw_state_fields_unpack(loop_fields, 3u, chunk->data, chunk->size, NULL, NULL,
+                                     NULL);
+    }
+#ifdef BLUEWAKE_HAS_DSP_ADAPTER
+    chunk = bw_state_find(&reader, "DSPHLE");
+    if (chunk != NULL && g_dsp_adapter != NULL && bluewake_dsp_adapter_is_hle(g_dsp_adapter)) {
+        if (!bluewake_dsp_adapter_load_state(g_dsp_adapter, chunk->data, (size_t)chunk->size))
+            fprintf(stderr, "[state] warning: the DSP HLE state did not load; audio may stop\n");
+    } else if (g_dsp_adapter != NULL) {
+        fprintf(stderr, "[state] warning: no DSP HLE state loaded; audio may stop\n");
+    }
+#endif
+    chunk = bw_state_find(&reader, "GX");
+    if (g_state_aurora) {
+        if (chunk == NULL)
+            fprintf(stderr, "[state] warning: no GX state: the next frames decode from "
+                            "reset GX registers\n");
+        else if (!dol_aurora_gx_load_state(chunk->data, (size_t)chunk->size))
+            fprintf(stderr, "[state] warning: the GX state did not load\n");
+    }
+
+    // What the machine derives from the state rather than holds.
+    if (mod->on_state_loaded != NULL)
+        mod->on_state_loaded(cpu);
+    g_overlap_cached_alias_state = 0xFFFFFFFFu;
+    g_overlap_cached_object = 0u;
+    g_overlap_slot_ptr = NULL;
+    g_overlap_fields_ptr = NULL;
+    g_published_interrupt_sources_valid = false;
+    g_interrupt_sources_dirty = true;
+    host_publish_interrupt_sources();
+    if (g_audio_dma.sample_rate != 0u)
+        dol_platform_audio_set_sample_rate(g_audio_dma.sample_rate);
+    dol_guest_memory_dirty_mark(0x80000000u, cpu->ram_size);
+    if (g_state_aurora)
+        dol_aurora_set_fast_forward(false);
+    snprintf(g_state_last_path, sizeof g_state_last_path, "%s", path);
+    ok = true;
+    fprintf(stderr,
+            "[state] loaded %s retrace=%llu pc=0x%08X mem1=0x%08X fields=%u missing=%u "
+            "mismatched=%u ms=%llu\n",
+            path, (unsigned long long)g_host_retrace_count, cpu->pc,
+            (u32)bw_state_hash(cpu->ram, cpu->ram_size, 0u), restored, missing, mismatched,
+            (unsigned long long)((host_state_now_us() - start_us) / 1000u));
+done:
+    bw_state_reader_close(&reader);
+    return ok;
+}
+
+// Where F5 saves (BLUEWAKE_STATE_DIR, else the working directory).
+static const char* host_state_dir(void) {
+    const char* dir = getenv("BLUEWAKE_STATE_DIR");
+    return dir != NULL && dir[0] != '\0' ? dir : ".";
+}
+
+// The newest .bwstate in the state directory: what F9 loads when this run has
+// neither saved nor loaded one (after a relaunch).
+static bool host_state_latest(char* out, size_t size) {
+    DIR* dir = opendir(host_state_dir());
+    if (dir == NULL)
+        return false;
+    time_t newest = 0;
+    bool found = false;
+    for (struct dirent* entry = readdir(dir); entry != NULL; entry = readdir(dir)) {
+        const size_t length = strlen(entry->d_name);
+        if (length < 9u || strcmp(entry->d_name + length - 8u, ".bwstate") != 0)
+            continue;
+        char path[1100];
+        snprintf(path, sizeof path, "%s/%s", host_state_dir(), entry->d_name);
+        struct stat info;
+        if (stat(path, &info) != 0 || !S_ISREG(info.st_mode))
+            continue;
+        if (!found || info.st_mtime >= newest) {
+            newest = info.st_mtime;
+            snprintf(out, size, "%s", path);
+            found = true;
+        }
+    }
+    closedir(dir);
+    return found;
+}
+
+// BLUEWAKE_STATE_TEST_LOAD=retrace (testing only): F9 at that retrace, once.
+static u64 g_state_test_load_retrace;
+static bool g_state_test_load_done;
+
+// BLUEWAKE_SAVE_STATE=path@retrace[,path@retrace...]
+static void host_state_parse_requests(void) {
+    const char* test_load = getenv("BLUEWAKE_STATE_TEST_LOAD");
+    if (test_load != NULL && test_load[0] != '\0')
+        g_state_test_load_retrace = strtoull(test_load, NULL, 10);
+    const char* env = getenv("BLUEWAKE_SAVE_STATE");
+    if (env == NULL || env[0] == '\0')
+        return;
+    const char* at = env;
+    while (*at != '\0' && g_state_request_count < HOST_STATE_MAX_REQUESTS) {
+        const char* end = strchr(at, ',');
+        const size_t length = end != NULL ? (size_t)(end - at) : strlen(at);
+        char item[1100];
+        if (length < sizeof item) {
+            memcpy(item, at, length);
+            item[length] = '\0';
+            char* sep = strrchr(item, '@');
+            char* number_end = NULL;
+            const unsigned long long retrace =
+                sep != NULL ? strtoull(sep + 1, &number_end, 10) : 0ull;
+            if (sep != NULL && sep != item && number_end != sep + 1 && *number_end == '\0' &&
+                (size_t)(sep - item) < sizeof g_state_requests[0].path) {
+                HostStateRequest* request = &g_state_requests[g_state_request_count++];
+                memcpy(request->path, item, (size_t)(sep - item));
+                request->path[sep - item] = '\0';
+                request->retrace = retrace;
+                request->done = false;
+                fprintf(stderr, "[state] will save %s at retrace %llu\n", request->path,
+                        (unsigned long long)retrace);
+            } else {
+                fprintf(stderr, "[state] ignoring BLUEWAKE_SAVE_STATE entry \"%s\" "
+                                "(want path@retrace)\n", item);
+            }
+        }
+        if (end == NULL)
+            break;
+        at = end + 1;
+    }
+}
+
+// F5 / F9 from the window's event observer (mouse_camera.c), main thread.
+void bluewake_save_state_hotkey(bool load) {
+    if (load)
+        g_state_hotkey_load = true;
+    else
+        g_state_hotkey_save = true;
+}
+
+// What must not be in flight when the machine is written or replaced.
+static const char* host_state_unsafe_reason(const CPUState* cpu,
+                                            const HostStateLoop* loop) {
+    if (cpu->exception != 0u)
+        return "exception pending";
+    if (*loop->rel_prolog_sda_pending)
+        return "REL prolog in progress";
+    if (!dol_hle_callback_idle())
+        return "memory card callback in flight";
+    if (bluewake_quick_doors_busy())
+        return "quick door in progress";
+    if (mem_read32((CPUState*)cpu, 0x803F6160u) >= 0x80000000u)
+        return "scene change in progress";
+    return NULL;
+}
+
+// Once per retrace: is a save due?
+static void host_state_arm(void) {
+    if (g_state_save_armed)
+        return;
+    bool due = g_state_hotkey_save;
+    for (u32 i = 0; i < g_state_request_count && !due; ++i)
+        due = !g_state_requests[i].done && g_host_retrace_count >= g_state_requests[i].retrace;
+    if (due) {
+        g_state_save_armed = true;
+        g_state_armed_retrace = g_host_retrace_count;
+        g_state_refusals = 0u;
+    }
+}
+
+// At the top of a host turn while a save is due.
+static void host_state_try_save(CPUState* cpu, const StaticRecompModuleDesc* mod,
+                                const HostStateLoop* loop, bool retrace_boundary) {
+    const bool draw_done = cpu->pc == HOST_STATE_DRAW_DONE_PC;
+    const u64 waited = g_host_retrace_count - g_state_armed_retrace;
+    if (!draw_done && !(retrace_boundary && waited >= 120u))
+        return;
+    const char* unsafe = host_state_unsafe_reason(cpu, loop);
+    if (unsafe != NULL) {
+        if (retrace_boundary && g_state_refusals++ % 60u == 0u)
+            fprintf(stderr, "[state] save waiting: %s (retrace %llu)\n", unsafe,
+                    (unsigned long long)g_host_retrace_count);
+        if (waited > 3600u) {
+            fprintf(stderr, "[state] no clean point for a minute; save dropped\n");
+            for (u32 i = 0; i < g_state_request_count; ++i)
+                if (g_state_requests[i].retrace <= g_host_retrace_count)
+                    g_state_requests[i].done = true;
+            g_state_hotkey_save = false;
+            g_state_save_armed = false;
+        }
+        return;
+    }
+    if (!draw_done)
+        fprintf(stderr, "[state] no draw-done point for %llu retraces; saving at a "
+                        "retrace boundary\n", (unsigned long long)waited);
+    for (u32 i = 0; i < g_state_request_count; ++i) {
+        HostStateRequest* request = &g_state_requests[i];
+        if (!request->done && g_host_retrace_count >= request->retrace) {
+            host_state_save(request->path, cpu, mod, loop);
+            request->done = true;
+        }
+    }
+    if (g_state_hotkey_save) {
+        g_state_hotkey_save = false;
+        char path[1100];
+        mkdir(host_state_dir(), 0755);
+        snprintf(path, sizeof path, "%s/quick-%llu.bwstate", host_state_dir(),
+                 (unsigned long long)g_host_retrace_count);
+        host_state_save(path, cpu, mod, loop);
+    }
+    g_state_save_armed = false;
+}
+
+// The per-turn hook, before the turn begins.
+static inline void host_state_turn(CPUState* cpu, const StaticRecompModuleDesc* mod,
+                                   const HostStateLoop* loop) {
+    bool retrace_boundary = false;
+    if (__builtin_expect(g_host_retrace_count != g_state_poll_retrace, 0)) {
+        g_state_poll_retrace = g_host_retrace_count;
+        retrace_boundary = true;
+        host_state_arm();
+        if (g_state_test_load_retrace != 0u && !g_state_test_load_done &&
+            g_host_retrace_count >= g_state_test_load_retrace) {
+            g_state_test_load_done = true;
+            g_state_hotkey_load = true;
+        }
+        if (g_state_hotkey_load) {
+            g_state_hotkey_load = false;
+            const char* unsafe = host_state_unsafe_reason(cpu, loop);
+            if (g_state_last_path[0] == '\0' &&
+                !host_state_latest(g_state_last_path, sizeof g_state_last_path))
+                fprintf(stderr, "[state] F9: no state in %s yet (F5 saves one)\n", host_state_dir());
+            else if (unsafe != NULL)
+                fprintf(stderr, "[state] F9: not now (%s)\n", unsafe);
+            else if (!host_state_load(g_state_last_path, cpu, mod, loop))
+                fprintf(stderr, "[state] F9: load failed; the machine may be inconsistent\n");
+            g_state_poll_retrace = g_host_retrace_count;
+            return;
+        }
+    }
+    if (__builtin_expect(g_state_save_armed, 0))
+        host_state_try_save(cpu, mod, loop, retrace_boundary);
+}
+
 int main(int argc, char** argv) {
     // The options menu's saved choices, before anything reads the environment.
     bluewake_settings_load();
@@ -6060,6 +6793,7 @@ int main(int argc, char** argv) {
     }
     fprintf(stderr, "[pad] platform input initialized; live input %s at SI\n",
             g_live_pad_enabled ? "merged" : "disabled");
+    g_state_aurora = aurora_enabled;
 
     const char* card_path = getenv("BLUEWAKE_CARD_PATH");
     if (!bluewake_card_runtime_open(card_path)) {
@@ -6587,6 +7321,7 @@ int main(int argc, char** argv) {
     host_mods_enable(lib, &cpu);
     bluewake_game_options_enable(lib, &cpu, g_options_mod);
     bluewake_mouse_camera_attach(&cpu);
+    bluewake_climb_attach(&cpu);
     bluewake_jump_button_attach(&cpu);
     bluewake_sprint_attach(&cpu);
     bluewake_fps_watch_attach(&cpu);
@@ -6981,9 +7716,26 @@ int main(int argc, char** argv) {
     u64 scene_draw_first_after_retrace[4] = {
         UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX,
     };
+    // Save states (see host_state_save): the requests, and a load before the
+    // first guest instruction.
+    const HostStateLoop state_loop = {&profile_prolog_called, &rel_prolog_sda_pending,
+                                      &rel_prolog_saved_r13};
+    host_state_parse_requests();
+    {
+        const char* load_state = getenv("BLUEWAKE_LOAD_STATE");
+        if (load_state != NULL && load_state[0] != '\0') {
+            if (!host_state_load(load_state, &cpu, mod, &state_loop)) {
+                fprintf(stderr, "[state] BLUEWAKE_LOAD_STATE=%s failed\n", load_state);
+                if (aurora_enabled)
+                    dol_aurora_shutdown();
+                return 1;
+            }
+        }
+    }
     while ((max_blocks == 0ull || blocks < max_blocks) && !stop_reason &&
            (max_retraces == 0ull ||
             g_host_retrace_count < max_retraces)) {
+        host_state_turn(&cpu, mod, &state_loop);
         g_current_host_block = blocks;
         bluewake_cycle_domain_begin_turn(&g_cycle_domain, &cpu);
         if (dol_platform_should_quit()) { stop_reason = "quit"; break; }
