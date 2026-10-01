@@ -248,9 +248,12 @@ game's code. Details are in [docs/MODS.md](docs/MODS.md).
 - **Loading hitches.** Changing areas can briefly stall.
 - **Save states** belong to the version of the app that made them: a later version may refuse one. The
   memory card is not part of a state, so keep saving in the game as well.
-- **Windows 0.2.0 and earlier** show "BlueWake stopped with an error (status 1)" when you close the
-  game (harmless: it closed normally), and **Restart now** in the settings can crash. Both are fixed in
-  Windows 0.2.1.
+- **Older Windows versions:** before 0.2.2, switching to fullscreen could crash on some PCs, mostly with
+  slower or integrated graphics. Before 0.2.1, closing the game showed "BlueWake stopped with an error
+  (status 1)" (harmless: it closed normally), and **Restart now** in the settings could crash. Update to
+  the latest release.
+- **Laptops with integrated graphics** (such as Intel UHD) can run slowly. Turn Smooth Motion off (F10)
+  and set **Render resolution** to 1x: Smooth Motion draws each frame a second time to show 60 FPS.
 - **Mac:** lava in Dragon Roost Cavern's areas renders as flat orange instead of its bright pattern.
 - **120 FPS** needs a display of 100 Hz or more (on a 60 Hz display Windows shows 60 instead), and the
   busiest scenes can dip below 120.
