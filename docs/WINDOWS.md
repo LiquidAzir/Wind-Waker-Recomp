@@ -155,7 +155,7 @@ BlueWake remembers where you left it, its size, and whether it was fullscreen.
 | Controller camera | The right stick turns it and aims; its click is first person (and back out) |
 | Settings | F1, or Esc when the mouse is not the camera |
 | Fullscreen | F11 or Alt+Enter |
-| Smooth Motion | F10 |
+| Frame interpolation on or off | F10 |
 | Frame rate | F9 |
 | Save state, load the latest | F5, F8 |
 
@@ -184,8 +184,8 @@ keep. (On a Mac F9 loads; on Windows F9 is the frame rate.)
 **Settings.** F1 opens the settings over the game (it keeps running underneath; the keyboard and mouse work the
 menu until you close it):
 
-- *Display*: fullscreen, Smooth Motion (off, 60 or 120 FPS), 60 Hz gameplay (experimental; see below), the
-  frame rate counter, the render resolution (the window's own pixels, or 1x to 4x the GameCube's 480 lines),
+- *Display*: fullscreen, the frame rate (30 FPS, 60 or 120 FPS with frame interpolation, or the experimental
+  60 Hz game logic; see below), the frame rate counter, the render resolution (the window's own pixels, or 1x to 4x the GameCube's 480 lines),
   texture filtering (up to 16x anisotropic), keeping the picture's shape, pausing while the window is in the
   background, and putting the window back in the middle.
 - *Controls*: the mouse camera, its sensitivity and vertical direction, the fast right-stick camera (or the
@@ -200,16 +200,19 @@ Display and control settings apply at once. The mods and the sound mode are comp
 starts, so those marked `*` apply when BlueWake starts again; **Restart now** does that. Everything is saved to
 `%APPDATA%\BlueWake\settings.ini`.
 
-**Smooth Motion** is on by default at 60 FPS: the renderer draws a blended frame between each of the game's 30,
-so the game shows 60 frames a second (F9's counter reads `60 FPS (game 30)`). The menu can also choose 120 FPS
-(three in-between frames each, for a 120 Hz display) or turn it off; F10 turns it off and back on. 120 FPS is
+**Frame rate.** The Display tab's **Frame rate** list has four choices. **60 FPS (frame interpolation)** is the
+default (Smooth Motion): the renderer draws a blended frame between each of the game's 30, so the game shows 60
+frames a second (F9's counter reads `60 FPS (game 30)`). **120 FPS (frame interpolation)** draws three in-between
+frames each, for a 120 Hz display, and **30 FPS** is the game's own, with none; F10 turns frame interpolation off
+and back on. 120 FPS is
 used only while the window is on a display of 100 Hz or more: on a 60 Hz display the game would wait for
 presents the display cannot show and run at half speed, so it shows 60 there (the menu says so). Scenes with
 nothing to blend (menus, the title, still shots) keep the same rhythm, so the picture's timing does not change
 when they begin or end.
 
-**60 Hz gameplay** (off by default, experimental) runs the game itself 60 times a second instead of blending
-frames; Smooth Motion is off while it runs. It needs a fast CPU (see
+**60 Hz game logic (experimental, not recommended)**, the list's last choice, runs the game itself 60 times a
+second instead of blending frames, so parts of it (movement, cutscenes, some timers) still run too fast; frame
+interpolation is off while it runs. It needs a fast CPU (see
 [status/WINDOWS_NATIVE_60HZ_2026-09-29.md](status/WINDOWS_NATIVE_60HZ_2026-09-29.md)), and some timing is not
 converted yet ([SIMULATION_60HZ.md](SIMULATION_60HZ.md)). It applies when BlueWake starts again.
 
@@ -219,9 +222,9 @@ Command-line options (`BlueWake.exe --help`) choose for one session; they win ov
 | --- | --- |
 | `--widescreen` | 16:9: the widescreen mod (a wider camera, culling and HUD) with a 16:9 picture |
 | `--aspect 16:10` | 16:10 instead (`4:3` is the game's own) |
-| `--smooth`, `--no-smooth` | Smooth Motion at 60 FPS (the default) or off (the game's own 30 FPS) |
-| `--120` | Smooth Motion at 120 FPS, for a 120 Hz display |
-| `--60hz`, `--30hz` | Experimental 60 Hz gameplay on or off |
+| `--smooth`, `--no-smooth` | 60 FPS with frame interpolation (the default), or the game's own 30 FPS |
+| `--120` | 120 FPS with frame interpolation, for a 120 Hz display |
+| `--60hz`, `--30hz` | The experimental 60 Hz game logic on or off (not recommended) |
 | `--betterww` | Better Wind Waker's settings at their defaults (Swift Sail, instant text, faster climbing...) |
 | `--options LIST` | Change them: `name,-name,...`, or `none,name,...` (names in `mods/betterww/options.txt`) |
 | `--fullscreen` | Start in fullscreen |

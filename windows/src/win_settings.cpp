@@ -1,5 +1,5 @@
 // BlueWake for Windows: the settings, the in-game settings menu (F1 or Esc),
-// the desktop hotkeys (F11 and Alt+Enter fullscreen, F10 Smooth Motion, F9 the
+// the desktop hotkeys (F11 and Alt+Enter fullscreen, F10 frame interpolation, F9 the
 // frame rate) and the window's placement. Save states' keys (F5 save, F8 load)
 // are the host's (mouse_camera.c); the menu has buttons for them too.
 //
@@ -453,38 +453,66 @@ void restart_note(bool differs) {
     }
 }
 
+// The frame rate, one choice: the game's own 30 frames a second (0); 60 (1) or
+// 120 (2) shown with frame interpolation (Smooth Motion: blended in-between
+// frames, one or three per game frame); or the experimental 60 Hz game logic
+// (3), where the game itself runs 60 times a second (no in-between frames;
+// applies at the next launch, like the mods).
+int frame_rate_choice() {
+    const Settings& d = g_saved;
+    return d.native_60hz && bluewake_simulation_supported() ? 3
+           : !d.smooth_motion                               ? 0
+           : d.smooth_steps >= 3                            ? 2
+                                                            : 1;
+}
+
+void choose_frame_rate(int rate) {
+    Settings& d = g_saved;
+    d.native_60hz = rate == 3;
+    if (rate != 3) {
+        d.smooth_motion = rate != 0;
+        if (rate != 0)
+            d.smooth_steps = rate == 2 ? 3 : 1;
+        // While the 60 Hz game logic runs, frame interpolation waits for the
+        // next launch with it.
+        if (!bluewake_simulation_enabled()) {
+            aurora_set_frame_interp_steps(shown_steps());
+            aurora_set_frame_interpolation(d.smooth_motion);
+        }
+    }
+    changed();
+}
+
 void tab_display(SDL_Window* w) {
     Settings& d = g_saved;
     bool full = w != nullptr && is_fullscreen(w);
     if (ImGui::Checkbox("Fullscreen   (F11 or Alt+Enter)", &full))
         set_fullscreen(w, full);
     const bool native = bluewake_simulation_enabled();
-    // Smooth Motion: the game's 30 frames a second, or in-between frames for 60
-    // (one each, the default) or 120 (three each, for a 120 Hz display).
-    static const char* const kSmooth[] = {"Off (30 FPS, the game's own)", "60 FPS", "120 FPS (120 Hz displays)"};
-    int smooth = native || !d.smooth_motion ? 0 : d.smooth_steps >= 3 ? 2 : 1;
-    ImGui::BeginDisabled(native);
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16);
-    if (ImGui::Combo("Smooth Motion   (F10)", &smooth, kSmooth, IM_ARRAYSIZE(kSmooth))) {
-        d.smooth_motion = smooth != 0;
-        if (smooth != 0)
-            d.smooth_steps = smooth == 2 ? 3 : 1;
-        aurora_set_frame_interp_steps(shown_steps());
-        aurora_set_frame_interpolation(d.smooth_motion);
-        changed();
+    static const char* const kFrameRate[] = {
+        "30 FPS (the game's own)",
+        "60 FPS (frame interpolation)",
+        "120 FPS (frame interpolation, 120 Hz displays)",
+        "60 Hz game logic (experimental, not recommended)",
+    };
+    int rate = frame_rate_choice();
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 20);
+    if (ImGui::Combo("Frame rate", &rate, kFrameRate, bluewake_simulation_supported() ? 4 : 3))
+        choose_frame_rate(rate);
+    restart_note(d.native_60hz != g_launched.native_60hz);
+    if (rate == 3) {
+        ImGui::TextDisabled("    The game itself runs 60 times a second. Movement, cutscenes and some timers");
+        ImGui::TextDisabled("    are not converted yet, so parts run too fast or look wrong; it needs a fast CPU.");
+    } else if (rate == 0) {
+        ImGui::TextDisabled("    No frame interpolation: the game's own 30 frames a second. F10 turns it on.");
+    } else {
+        ImGui::TextDisabled("    The game runs at its own 30 a second; frame interpolation blends the frames");
+        ImGui::TextDisabled("    in between. F10 turns it off and on.");
     }
-    ImGui::EndDisabled();
-    ImGui::TextDisabled(native ? "    Off while 60 Hz gameplay runs: every frame is the game's own."
-                               : "    Blended frames between the game's 30 a second; F10 turns them on and off.");
-    if (!native && d.smooth_motion && d.smooth_steps >= 3 && shown_steps() < 3)
+    if (native && rate != 3)
+        ImGui::TextDisabled("    The 60 Hz game logic runs until BlueWake starts again.");
+    else if (!native && rate == 2 && shown_steps() < 3)
         ImGui::TextDisabled("    This display runs at %.0f Hz: 60 FPS until the window is on a 120 Hz one.", g_refresh);
-    if (bluewake_simulation_supported()) {
-        if (ImGui::Checkbox("60 Hz gameplay (experimental)", &d.native_60hz))
-            changed();
-        restart_note(d.native_60hz != g_launched.native_60hz);
-        ImGui::TextDisabled("    The game itself runs 60 times a second. Movement, cutscenes and some");
-        ImGui::TextDisabled("    timers are still being converted (docs/SIMULATION_60HZ.md).");
-    }
     if (ImGui::Checkbox("Show the frame rate   (F9)", &d.show_fps)) {
         aurora_set_fps_overlay(d.show_fps);
         changed();
@@ -564,7 +592,7 @@ void tab_controls() {
             {"A  B  X  Y", "J  K  U  I"}, {"L  R  Z", "E  R  Q"}, {"START", "Return"},
             {"Jump", "Space (controller: left bumper)"}, {"Sprint", "Shift (controller: click the left stick)"},
             {"Camera zoom", "Mouse wheel, while the mouse is the camera"},
-            {"Settings", "F1 or Esc"}, {"Fullscreen", "F11 or Alt+Enter"}, {"Smooth Motion", "F10"},
+            {"Settings", "F1 or Esc"}, {"Fullscreen", "F11 or Alt+Enter"}, {"Frame interpolation", "F10"},
             {"Frame rate", "F9"},
         };
         for (const auto& row : rows) {
@@ -901,6 +929,12 @@ void draw_hint(SDL_Window* w) {
 
 // Every presented frame, on the main thread, inside Aurora's frame.
 void frame(void*) {
+    // BLUEWAKE_MOUSE_LATENCY=1 (diagnostics): when the game's present runs, just
+    // before Aurora collects the window's events (mouse_camera.c logs when the
+    // camera takes them).
+    static const bool latency_log = env_set("BLUEWAKE_MOUSE_LATENCY");
+    if (latency_log)
+        std::fprintf(stderr, "[mouse-latency] present t=%.2f\n", SDL_GetTicksNS() / 1e6);
     SDL_Window* w = game_window();
     if (w == nullptr)
         return;
@@ -921,6 +955,18 @@ void frame(void*) {
     if (g_toggle_menu) {
         g_toggle_menu = false;
         set_menu_open(!g_menu_open);
+    }
+    // Testing (BLUEWAKE_TEST_MENU=SECONDS[:RATE]): the menu opens by itself that
+    // long after the first frame, so a test can look at it without keys, and
+    // with RATE (0-3) the Frame rate list's choice is made as a click would.
+    static const char* const test_menu = std::getenv("BLUEWAKE_TEST_MENU");
+    static bool test_menu_done;
+    if (test_menu != nullptr && test_menu[0] != '\0' && !test_menu_done &&
+        SDL_GetTicks() - g_first_frame_at >= static_cast<Uint64>(std::atol(test_menu)) * 1000u) {
+        test_menu_done = true;
+        set_menu_open(true);
+        if (const char* rate = std::strchr(test_menu, ':'); rate != nullptr)
+            choose_frame_rate(std::clamp(std::atoi(rate + 1), 0, 3));
     }
     track_window(w);
     // The frame rate in the session log, a line a second beside the host's

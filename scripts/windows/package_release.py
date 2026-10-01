@@ -72,12 +72,14 @@ Start
 Needs Windows 10 or 11 (64-bit), a Direct3D 12 GPU, and a CPU with AVX2
 (Intel Haswell, AMD Zen or newer).
 
-Smooth Motion: 60 FPS by default, drawn from the game's 30 with in-between
-frames. F10 turns it off and on; the settings choose 60 or 120 FPS (120 on a
-display of 100 Hz or more). "60 Hz gameplay" in the settings (experimental)
-runs the game itself at 60.
+Frame rate (settings, Display): 60 FPS by default, with frame interpolation
+(in-between frames blended from the game's own 30). F10 turns it off and on;
+the settings choose 30, 60 or 120 FPS (120 on a display of 100 Hz or more).
+The same list has "60 Hz game logic (experimental, not recommended)": the game
+itself at 60, with parts that still run too fast.
 
 If it runs slowly: F9 shows the frame rate ("60 FPS (game 30)" is full speed).
+On a laptop with integrated graphics, try 30 FPS (F10) and Render resolution 1x.
 Please send the newest session log (%APPDATA%\\BlueWake\\logs\\session-*.log)
 after a minute of play with your report: it names your CPU and GPU and, each
 second, which part of the PC held the game back.
@@ -91,7 +93,7 @@ camera directly and aims, its click is first person (and back out), the left
 stick zooms the telescope and the Picto Box, the left bumper jumps and a click
 of the left stick sprints. Settings, Controls: the game's own right stick
 instead, the right stick's speeds and directions.
-F1 or Esc settings, F11 or Alt+Enter fullscreen, F10 Smooth Motion, F9 frame rate.
+F1 or Esc settings, F11 or Alt+Enter fullscreen, F10 frame interpolation, F9 frame rate.
 F5 saves a save state and F8 loads the latest one (%APPDATA%\\BlueWake\\states);
 they belong to this build. Use the game's own save for anything you keep.
 Climbing any wall on a stamina wheel: settings, Mods, "Climb any wall".
