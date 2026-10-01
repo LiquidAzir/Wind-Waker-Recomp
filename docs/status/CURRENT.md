@@ -1,3 +1,27 @@
+## 2026-10-01 Windows 0.2.2 update: one Frame rate list, and the mouse a game frame sooner
+
+**The Frame rate list.** Players confused Smooth Motion (60 or 120 shown, the game at its own 30) with
+the experimental 60 Hz gameplay (the game itself at 60). The Display tab now has one **Frame rate** list:
+30 FPS (the game's own), 60 FPS (frame interpolation), 120 FPS (frame interpolation, 120 Hz displays) and,
+where the module has the 60 Hz sites, 60 Hz game logic (experimental, not recommended), each with a line
+saying what it does; the 60 Hz choice still applies at the next launch. F10's name is frame
+interpolation. `BLUEWAKE_TEST_MENU=SECONDS[:CHOICE]` opens the menu by itself (and makes that choice)
+for tests: each choice was checked that way, in screenshots and in settings.ini.
+
+**The mouse.** Players found the mouse camera floaty, worse at 30 FPS. Measured on the test PC: the game
+presents (and Aurora collects the window's events) every 33.4 ms, once a game frame, and the camera
+takes the pointer's motion at bumpCheck a median 21.5 ms after that (18.2-23.1 ms, at 60 and at 30
+FPS alike), so motion was 21.5-55 ms old when the camera used it, about 38 ms on average. The present
+queue adds nothing here: with `DOL_AURORA_PRESENT_TIMING` (a diagnostic, not kept) the swapchain's
+acquire took 0.02 ms and its present 0.2 ms (median), never a refresh. mouse_camera.c's
+`take_fresh_motion` now pumps the window's messages and takes the queued motion off SDL's queue when the
+camera uses it (only while the mouse is the camera and no menu is open), so the same deltas count up to
+a game frame sooner. With scripted motion pushed through SDL's queue (`BLUEWAKE_MOUSE_TEST_QUEUE=1`, the
+camera captured by a posted click with `SDL_MOUSE_FOCUS_CLICKTHROUGH=1`), the view began turning at
+retrace 1700 instead of 1702 and ended at the same angle (-2398), so nothing is counted twice.
+`BLUEWAKE_MOUSE_FRESH=0` turns it off; `BLUEWAKE_MOUSE_LATENCY=1` logs the two times. The Mac collects
+events the same way, so this does not explain a difference from the Mac by itself.
+
 ## 2026-09-30 A fullscreen crash: Smooth Motion's deferred presents during a swapchain resize (Windows 0.2.2)
 
 A tester's i7-8565U laptop (Intel UHD 620) crashed on every switch to fullscreen, by F11 or the
