@@ -6346,6 +6346,12 @@ static void host_state_parse_requests(void) {
 }
 
 // F5 / F9 from the window's event observer (mouse_camera.c), main thread.
+// The load key is F8 on Windows, where F9 is the frame rate.
+#if defined(_WIN32)
+#define HOST_STATE_LOAD_KEY "F8"
+#else
+#define HOST_STATE_LOAD_KEY "F9"
+#endif
 void bluewake_save_state_hotkey(bool load) {
     if (load)
         g_state_hotkey_load = true;
@@ -6444,11 +6450,12 @@ static inline void host_state_turn(CPUState* cpu, const StaticRecompModuleDesc* 
             const char* unsafe = host_state_unsafe_reason(cpu, loop);
             if (g_state_last_path[0] == '\0' &&
                 !host_state_latest(g_state_last_path, sizeof g_state_last_path))
-                fprintf(stderr, "[state] F9: no state in %s yet (F5 saves one)\n", host_state_dir());
+                fprintf(stderr, "[state] " HOST_STATE_LOAD_KEY ": no state in %s yet (F5 saves one)\n",
+                        host_state_dir());
             else if (unsafe != NULL)
-                fprintf(stderr, "[state] F9: not now (%s)\n", unsafe);
+                fprintf(stderr, "[state] " HOST_STATE_LOAD_KEY ": not now (%s)\n", unsafe);
             else if (!host_state_load(g_state_last_path, cpu, mod, loop))
-                fprintf(stderr, "[state] F9: load failed; the machine may be inconsistent\n");
+                fprintf(stderr, "[state] " HOST_STATE_LOAD_KEY ": load failed; the machine may be inconsistent\n");
             g_state_poll_retrace = g_host_retrace_count;
             return;
         }
