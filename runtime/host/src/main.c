@@ -15377,6 +15377,8 @@ int main(int argc, char** argv) {
 #endif
     bluewake_card_runtime_close();
     cpu_free(&cpu);
-    return stop_reason ? 1 : 0;
+    // A quit is the player closing the window: a normal end, not a failure.
+    // (The Windows app shows an error box for any other status.)
+    return stop_reason != NULL && strcmp(stop_reason, "quit") != 0 ? 1 : 0;
 }
 #undef cpu

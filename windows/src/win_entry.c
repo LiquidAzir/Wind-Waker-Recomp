@@ -707,6 +707,11 @@ int main(int argc, char** argv) {
     start_profile();
     char* host_argv[3] = {argv[0], module, NULL};
     const int status = bluewake_host_main(2, host_argv);
+    // The menu's Restart now: this session has quit like a closed window and
+    // shut down (the memory card closed, the renderer gone), so the new one
+    // starts now.
+    if (status == 0 && bw_settings_finish_restart() < 0)
+        fatal_box("BlueWake could not start again. Start it yourself; the settings are saved.");
     fflush(stdout);
     fflush(stderr);
     if (status != 0) {

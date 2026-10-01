@@ -420,25 +420,21 @@ void open_folder(const std::string& path) {
 }
 
 // Start BlueWake again, with the command line and environment it began with,
-// so the settings file decides what the new session is.
+// so the settings file decides what the new session is. This session quits
+// the way closing the window does, and the new one starts once it has shut
+// down (bw_settings_finish_restart, from main): calling exit here, inside a
+// frame with the graphics threads running, ended in std::terminate, and the
+// two sessions would have shared the memory card and the caches meanwhile.
+bool g_restart_requested;
+
 void restart() {
     save_file();
-    wchar_t exe[MAX_PATH * 2];
-    if (GetModuleFileNameW(nullptr, exe, MAX_PATH * 2) == 0)
-        return;
-    std::vector<wchar_t> command(GetCommandLineW(), GetCommandLineW() + wcslen(GetCommandLineW()) + 1);
-    STARTUPINFOW startup{};
-    startup.cb = sizeof startup;
-    PROCESS_INFORMATION process{};
-    if (!CreateProcessW(exe, command.data(), nullptr, nullptr, FALSE, CREATE_UNICODE_ENVIRONMENT,
-                        g_environment.empty() ? nullptr : g_environment.data(), nullptr, &startup, &process)) {
-        std::fprintf(stderr, "[windows] restart failed (error %lu)\n", GetLastError());
-        return;
-    }
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
+    g_restart_requested = true;
+    set_menu_open(false);
+    SDL_Event quit{};
+    quit.type = SDL_EVENT_QUIT;
+    SDL_PushEvent(&quit);
     std::fprintf(stderr, "[windows] restarting with the new settings\n");
-    std::exit(0);
 }
 
 // --- the menu ---------------------------------------------------------------
@@ -1111,6 +1107,27 @@ extern "C" void bw_settings_apply_launch(void) {
     else
         g_saved.show_fps = std::getenv("DOL_AURORA_SHOW_FPS")[0] == '1';
     g_launched = g_saved;
+}
+
+extern "C" int bw_settings_finish_restart(void) {
+    if (!g_restart_requested)
+        return 0;
+    wchar_t exe[MAX_PATH * 2];
+    if (GetModuleFileNameW(nullptr, exe, MAX_PATH * 2) == 0)
+        return -1;
+    std::vector<wchar_t> command(GetCommandLineW(), GetCommandLineW() + wcslen(GetCommandLineW()) + 1);
+    STARTUPINFOW startup{};
+    startup.cb = sizeof startup;
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(exe, command.data(), nullptr, nullptr, FALSE, CREATE_UNICODE_ENVIRONMENT,
+                        g_environment.empty() ? nullptr : g_environment.data(), nullptr, &startup, &process)) {
+        std::fprintf(stderr, "[windows] restart failed (error %lu)\n", GetLastError());
+        return -1;
+    }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    std::fprintf(stderr, "[windows] started the new session\n");
+    return 1;
 }
 
 extern "C" void bw_settings_install(void) {

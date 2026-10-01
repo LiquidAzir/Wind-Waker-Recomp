@@ -15,6 +15,10 @@ void bw_settings_load(const char* data_dir);
 void bw_settings_apply_launch(void);
 // Before the host starts: the menu and hotkeys draw in Aurora's frame.
 void bw_settings_install(void);
+// After the host has shut down: if the menu's Restart now ended this session,
+// start the new one. 1 when it started, 0 when no restart was asked for, -1
+// when starting it failed.
+int bw_settings_finish_restart(void);
 // From the game thread's keyboard hook, for a key going down: 1 when BlueWake
 // handled it (the game does not see it). alt: Alt is held.
 int bw_settings_key(unsigned virtual_key, int alt);
