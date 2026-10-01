@@ -73,8 +73,8 @@ Mac, and a faster graphics thread for slower CPUs on both.
 
 | Feature | What it adds |
 | --- | --- |
-| **Smooth Motion** (Windows, Mac) | The game runs at its own 30 frames a second, and the renderer draws in-between frames blended from the game's own: **60 FPS** by default, or **120 FPS** on a display of 100 Hz or more. It follows the camera and what the game moves itself. On by default; F10 turns it off and on (Windows) |
-| **60 Hz gameplay** (Windows, experimental) | The game itself runs 60 times a second instead, on a fast CPU. Movement, cutscenes and some timers are still being converted ([docs/SIMULATION_60HZ.md](https://github.com/elliotttate/Wind-Waker-Recomp/blob/windows-release/docs/SIMULATION_60HZ.md)) |
+| **Smooth Motion** (frame interpolation; Windows, Mac) | The game runs at its own 30 frames a second, and the renderer draws in-between frames blended from the game's own: **60 FPS** by default, or **120 FPS** on a display of 100 Hz or more. It follows the camera and what the game moves itself. On by default; F10 turns it off and on (Windows) |
+| **60 Hz game logic** (Windows; experimental, not recommended) | The game itself runs 60 times a second instead of interpolating, on a fast CPU. Movement, cutscenes and some timers are still being converted, so parts run too fast ([docs/SIMULATION_60HZ.md](https://github.com/elliotttate/Wind-Waker-Recomp/blob/windows-release/docs/SIMULATION_60HZ.md)) |
 | **Widescreen** | 16:9 or 16:10, with the camera, culling and HUD widened; or the game's own 4:3 |
 | **Resolution and filtering** | Render at up to 4× the GameCube's 480 lines, or at the window's own pixels, with texture filtering up to 16× anisotropic |
 | **HD texture packs** | Dolphin-format packs for GZLE01, such as Hypatia's HD pack (you add the pack yourself) |
@@ -132,7 +132,7 @@ The keyboard and mouse are the same on Windows and Mac:
 | Save state | F5 | |
 | Load the latest state | F8 on Windows, F9 on Mac (hold fn on a MacBook) | |
 | Fullscreen | F11 or Alt+Enter (Windows); the settings on both | |
-| Smooth Motion on or off | F10 (Windows) | |
+| Frame interpolation on or off | F10 (Windows) | |
 | Frame rate | F9 (Windows) | |
 
 On iPhone and iPad, the touch controls, controllers and keyboards that iOS supports work; camera
@@ -150,8 +150,8 @@ inversion and button remapping are under **⋯ › Controller**, and the game's 
 
 Needs Windows 10 or 11 (64-bit), a Direct3D 12 GPU and a CPU with AVX2 (Intel Haswell, AMD Zen or newer).
 
-The settings (F1) have four tabs: **Display** (fullscreen, Smooth Motion off/60/120, 60 Hz gameplay,
-resolution, filtering), **Controls** (mouse and stick cameras), **Mods** (aspect ratio, Better Wind Waker,
+The settings (F1) have four tabs: **Display** (fullscreen; the frame rate: 30 FPS, 60 or 120 FPS with frame
+interpolation, or the experimental 60 Hz game logic; resolution, filtering), **Controls** (mouse and stick cameras), **Mods** (aspect ratio, Better Wind Waker,
 quick doors, climbing, HD textures) and **Sound and files**, with **Save state** and **Load latest state**
 at the bottom. Saves, settings, save states (`states`), the prepared disc and session logs are in
 `%APPDATA%\BlueWake`.
@@ -210,7 +210,7 @@ GZLE01.card**, and **⋯ › Game Data & Saves** backs them up, restores them an
 
 | Device | Result |
 | --- | --- |
-| Windows PC (Core i9-13900KF, RTX 5090) | Smooth Motion: 60 FPS shown with the game at its full 30, Link running on Outset (lowest second 58.7). 60 Hz gameplay: 59-60 game frames a second on the same route |
+| Windows PC (Core i9-13900KF, RTX 5090) | Smooth Motion: 60 FPS shown with the game at its full 30, Link running on Outset (lowest second 58.7). 60 Hz game logic: 59-60 game frames a second on the same route |
 | Windows, a slower CPU (12 of the i9's efficiency cores, standing in) | Full speed (60 shown, the game at 30) at Outset's busiest view, standing and running, since 0.1.1; 0.1.0 managed 23-26 game frames a second there |
 | Mac (Apple Silicon) | Smooth Motion at 60 or 120; the busiest scenes can dip below 120 at 120 Hz, 60 is steadier |
 | iPad Pro 12.9" (M2) | Steady 30 FPS at full speed; a 44-minute session had 14 seconds below 29 FPS, all brief dips at area loads |
@@ -257,7 +257,8 @@ game's code. Details are in [docs/MODS.md](docs/MODS.md).
 - **Mac:** lava in Dragon Roost Cavern's areas renders as flat orange instead of its bright pattern.
 - **120 FPS** needs a display of 100 Hz or more (on a 60 Hz display Windows shows 60 instead), and the
   busiest scenes can dip below 120.
-- **60 Hz gameplay** is experimental: dialogue, cutscenes and transitions keep their original timing.
+- **60 Hz game logic** (Windows) is experimental and not recommended: dialogue, cutscenes and transitions
+  keep their original timing, so parts run too fast.
 - **Busy scenes on iPhone** drop below 30 FPS on chips older than the M-series iPads.
 
 ## Getting help
@@ -296,7 +297,7 @@ is no JIT; only a few rare instructions fall back to an interpreter. The hardwar
 
 30 is the game's own frame rate on the GameCube, and the game runs at that rate at full speed. Smooth
 Motion draws in-between frames, blended from the game's own, to show 60 or 120 without changing how the
-game plays. The experimental 60 Hz gameplay on Windows runs the game itself at 60 instead.
+game plays. The experimental 60 Hz game logic on Windows runs the game itself at 60 instead.
 
 ### What are save states for, and do they replace saving?
 
