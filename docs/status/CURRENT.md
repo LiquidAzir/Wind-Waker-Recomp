@@ -1,3 +1,42 @@
+## 2026-09-30 Save states and climbing on Windows (Windows 0.2.0)
+
+main b39bd0d merged into windows-release (2476b48), with the Windows app's part in 3ba8599: save_state.c
+and climb.c built, Aurora's zlib linked (zlib1.dll was already in the download), states in
+`%APPDATA%\BlueWake\states` (`BLUEWAKE_STATE_DIR`), F5 saves and **F8** loads (F9 is the frame rate on
+Windows; mouse_camera.c picks the key, main.c's log names it), the settings' Mods tab has "Climb any
+wall" and its stamina (settings.ini `climb=`, `climb_stamina=`), the menu has Save state and Load latest
+state, and win_settings.cpp draws the stamina wheel. Built from 1510ed1 (game module 983ec7dc, the same
+code as the tested 9ae71f76 but for the link time stamp).
+
+Climbing needs the game module's direct-call watch list to name climb.h's addresses (0x8010F0DC,
+0x8010F554, 0x80135FE4): scripts/windows/direct_calls.py reads them from the host sources, and the
+builder keys the module on that list. With 0.1.1's module (built before climb.c existed) Link ran into
+the wall and never grabbed it; with the rebuilt module he does.
+
+Checked on the i9-13900KF and RTX 5090, windowed:
+
+- Both features off, the Outset route (pinned window, Smooth Motion off, unpaced): 19 of 19 captured
+  frames are 0.1.0's; Smooth Motion's in-between dumps 62 of 62.
+- Save states: one saved at retrace 1000 (23.5 MB, 0.16 s) leaves all 19 frames unchanged. Loaded
+  mid-run at 1600 (0.07 s, 150 host fields, none missing), the run reproduces the frames of the run that
+  never loaded, 10 of them after the load. Loaded at boot, with a fixed clock (`BLUEWAKE_CLOCK=0`), the
+  state saved at retrace 2000 has the CPU, MEM1, ARAM, the guest aliases, the VI clock, the host and
+  loop variables and the DSP byte for byte those of the run that never loaded (the GX chunk differs in
+  about 100 bytes, as it does after a mid-run load whose frames are exact). Frame captures after a boot
+  load land on other retraces (1004, 1107, ... against 1007, 1109, ...: nothing has been drawn yet, so
+  the presents' timing differs) and its first frame lacked the palm trees, whose pipelines were still
+  being compiled (Aurora skips a draw whose pipeline is pending, as on any first visit to a place).
+  F5 and F8 pressed in the window (SendInput) and the menu's two buttons each saved and loaded.
+- Climbing, Orca's house (`BLUEWAKE_TEST_WARP=1100:Ojhous:1:0`, a 6 s wheel), two approaches to the back
+  wall: grabbed (proc 0x3D, then 0x3F), the wheel 0.1 lower every 18 frames, out of stamina he let go,
+  full again 3.3 s after landing, grabbed again. In a paced window the wheel shows beside him (green,
+  orange when nearly out). Ticking "Climb any wall" in the menu wrote `climb=1`.
+- Speed as 0.1.1: on 12 efficiency cores (the slower-CPU stand-in) the game holds 30 (60 shown)
+  standing and running at the Outset spawn, and runs 35.8 game frames a second unpaced (0.1.1: 35.0).
+- The download (WindWakerRecomp-0.2.0-windows-x64.zip) unpacked fresh: the first launch unpacked and
+  prepared the .rvz, the game ran at 60 shown / 30 with Link moving, a state saved at 1401 and loaded at
+  1900.
+
 ## 2026-09-30 The Windows build's GX worker work merged (Mac-tested)
 
 RecompCore 8ab24da (patch 0112) merges the Windows build's RecompCore branch (windows-release, forked
