@@ -112,7 +112,7 @@ player onboarding path.
 
 | Component | Source | Pinned |
 | --- | --- | --- |
-| RecompCore (GXRuntime, Aurora, DSP) | https://github.com/elliotttate/RecompCore, branch `bluewake` (chrissotraidis/RecompCore 2d60636 plus patches/recompcore 0098-0116 and the save states' two) | `8ab24daee9c641634fda5cac30389ad4b2cfda5e` |
+| RecompCore (GXRuntime, Aurora, DSP) | https://github.com/elliotttate/RecompCore, branch `windows-release` (chrissotraidis/RecompCore 2d60636 plus patches/recompcore 0098-0117 and the save states' two) | `9618e9d84558429f9c057a821127930c35dd7db0` |
 | DolRecomp (translator) | https://github.com/elliotttate/DolRecomp, branch `bluewake` (RecompCore's `DolRecomp` submodule; chrissotraidis/DolRecomp 5c91d6e plus patches/dolrecomp/0019) | `b8b534591cba8ca7cd43943a655ee6e2591cf5de` |
 | Aurora | vendored in RecompCore at `GXRuntime/graphics/aurora` (plain files) | with RecompCore |
 | Dawn (WebGPU) for iOS | https://github.com/encounter/dawn/releases v20260618.032059, `dawn-ios-arm64.tar.gz` | sha256 `ada0bafc...a7ae2` |

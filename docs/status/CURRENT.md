@@ -1,3 +1,31 @@
+## 2026-09-30 A fullscreen crash: Smooth Motion's deferred presents during a swapchain resize (Windows 0.2.2)
+
+A tester's i7-8565U laptop (Intel UHD 620) crashed on every switch to fullscreen, by F11 or the
+settings, in 0.2.1 too ("an issue with the WebGPU DLL"). Going fullscreen resizes the swapchain: the
+surface is reconfigured and the frame buffers and the copy bind group replaced, on the main thread,
+after `render_worker::synchronize()`. That only drains the render worker's queue, and Smooth Motion's
+deferred presents run on the worker between queue items (its idle hook), so one could start in the
+middle of the resize and submit or present with the old swapchain's objects.
+
+Reproduced on the i9-13900KF and RTX 5090 by making the gap wide: the game held to two logical CPUs
+(affinity 0x3), a 4x render scale with 16x filtering, and F11 pressed 30 times 150-900 ms apart. 0.2.1
+crashed after 9 presses (an access violation in nvwgf2umx.dll under webgpu_dawn.dll) and, in a second
+run, after 21 (a null read in webgpu_dawn.dll). The crashing thread was the render worker:
+`worker_main` -> idle hook -> `deferred_present_tick` -> `present_deferred` -> `end_frame`'s callback
+-> `Queue::Submit`.
+
+RecompCore 9618e9d (patch 0117) adds `render_worker::Pause`: the worker finishes what is queued, runs a
+callback (the deferred presents still waiting, on the old swapchain), then waits, running neither queue
+items nor the idle hook, until the main thread has finished; `resize_swapchain`, `refresh_surface` and
+`release_surface` use it instead of `synchronize()`. The window system calls stay on the main thread (a
+Mac's surface needs its main thread). The same setup then ran 3 x 30 switches (90) without a crash and
+closed normally.
+
+Earlier the same day (1ce29ac, Windows 0.2.1): closing the window ended with status 1, so every player
+close showed "BlueWake stopped with an error (status 1)", and the settings' Restart now called
+`std::exit` inside a frame (a joinable GX worker thread at exit, `std::terminate`). Windows' event log
+on the test PC had two of the latter from 2026-09-29.
+
 ## 2026-09-30 Save states and climbing on Windows (Windows 0.2.0)
 
 main b39bd0d merged into windows-release (2476b48), with the Windows app's part in 3ba8599: save_state.c
